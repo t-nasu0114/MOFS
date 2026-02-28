@@ -1,0 +1,64 @@
+---
+# Indentation for access modifiers
+AccessModifierOffset: -2
+
+# Align arguments
+AlignAfterOpenBracket: Align
+
+# Align array of structures
+AlignArrayOfStructures: Left
+
+# Align consecutive lines
+AlignConsecutiveAssignments: true   # Assignments
+AlignConsecutiveDeclarations: true  # Declarations
+AlignConsecutiveMacros: true        # Macros
+AlignTrailingComments: true         # Comments
+
+# Wrap enum constants
+AllowShortEnumsOnASingleLine: false
+
+# Do not allow short functions on a single line
+AllowShortFunctionsOnASingleLine: None
+
+# Place braces on separate lines
+# Effective when BreakBeforeBraces is Custom
+BraceWrapping:
+  AfterClass: true              # After class
+  AfterControlStatement: false  # After control statement
+  AfterEnum: true               # After enum
+  AfterFunction: true           # After function
+  AfterStruct: true             # After struct
+  AfterUnion: true              # After union
+  AfterExternBlock: false       # After extern block
+  BeforeCatch: false            # Before catch
+  BeforeElse: false             # Before else
+
+# Custom brace breaking
+BreakBeforeBraces: Custom
+
+# Limit line length (0 for unlimited)
+ColumnLimit: 120
+
+# Sort includes alphabetically
+IncludeBlocks: Preserve
+
+# Indent case labels in switch statements
+IndentCaseLabels: false
+
+# Indent width
+IndentWidth: 4
+
+# Align pointer "*" and "&" to the right
+PointerAlignment: Right
+
+# Reflow comments
+ReflowComments: true
+
+# Do not insert space after C-style cast
+SpaceAfterCStyleCast: false
+
+# Insert space before "(" in control statements
+SpaceBeforeParens: ControlStatements
+
+# Spaces before trailing comments
+SpacesBeforeTrailingComments: 2
