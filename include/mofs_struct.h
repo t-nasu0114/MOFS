@@ -28,8 +28,8 @@ typedef struct mofs_superblock
 #define MOFS_DATA_BLK_PER_FILE 12U /* Max block number for one file */
 
 /* File type */
-#define MOFS_FTYPE_DIR 1U
-#define MOFS_FTYPE_REG 2U
+#define MOFS_FTYPE_DIR 0040000U /* Directory.  */
+#define MOFS_FTYPE_REG 0100000U /* Regular file.  */
 
 /* Inode (64byte aligned) */
 typedef struct mofs_inode

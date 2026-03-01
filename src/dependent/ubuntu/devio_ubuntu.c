@@ -11,8 +11,8 @@
 
 int dev_open(const char *path, int oflag)
 {
-    int ret = 0;
-    int flag;
+    int ret  = 0;
+    int flag = 0;
 
     /* Flag set nothing */
     if ((oflag | MOFS_IO_OPEN_FLAG_NONE) == 0) {
