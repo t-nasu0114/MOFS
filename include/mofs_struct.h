@@ -7,7 +7,7 @@
 /* Super Block */
 
 #define MOFS_BLK_SIZE  4096U
-#define MOFS_MAGIC_NUM 0xMOFS
+#define MOFS_MAGIC_NUM 0x4D4F4653U /* MOFS in ASCII */
 
 typedef struct mofs_superblock
 {
@@ -27,17 +27,18 @@ typedef struct mofs_superblock
 
 #define MOFS_DATA_BLK_PER_FILE 12U /* Max block number for one file */
 
-typedef enum mofs_filetype
-{
-    MOFS_DIR  = 1,
-    MOFS_FILE = 2
-} mofs_filetype_e;
+/* File type */
+#define MOFS_FTYPE_DIR 0040000U /* Directory.  */
+#define MOFS_FTYPE_REG 0100000U /* Regular file.  */
 
+/* Inode (64byte aligned) */
 typedef struct mofs_inode
 {
-    mofs_filetype_e i_type;
-    uint32_t        i_size;
-    uint16_t        i_links;
+    uint32_t i_size;  /* File size in bytes */
+    uint16_t i_links; /* Link count */
+    uint16_t i_mode;  /* Permission and file type */
+    uint32_t i_uid;   /* User ID */
+    uint32_t i_gid;   /* Group ID */
 
     uint32_t i_start_blk[MOFS_DATA_BLK_PER_FILE];
 } mofs_inode_t;
