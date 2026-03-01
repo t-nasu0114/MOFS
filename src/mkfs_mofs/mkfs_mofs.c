@@ -39,9 +39,17 @@ static int clear_blocks(int fd, uint32_t block_num)
 
 static int mofs_format(const char *device_file, int fs_size, int blk_size)
 {
-    int                ret = 0;
-    int                fd;
-    unsigned long long dev_size;
+    int                    ret = 0;
+    int                    fd;
+    int                    hole_blk_num;
+    int                    inode_num;
+    int                    inode_bitmap_blk_num;
+    int                    data_bitmap_blk_num;
+    int                    inode_table_blk_num;
+    int                    data_blk_num;
+    unsigned long long     dev_size;
+    struct mofs_superblock superblock;
+
     (void)blk_size;
 
     fd = dev_open(device_file, MOFS_IO_OPEN_FLAG_RDWR);
@@ -52,15 +60,53 @@ static int mofs_format(const char *device_file, int fs_size, int blk_size)
     }
 
     /* Get device size */
-    if (ret == 0) {
-        dev_size = dev_get_size(fd, &ret);
+    dev_size = dev_get_size(fd, &ret);
+    if (ret != 0) {
+        MOFS_ERR("Get device size error\n");
+        goto out2;
+    }
+
+    /* Calculate device layout */
+    int bpi = MOFS_BLK_SIZE * 4; /* Bytes-per-inode = 16KB(4 blocks)
+                                    MAYBE: Bytes-per-inode is decided by format option */
+    hole_blk_num         = dev_size / MOFS_BLK_SIZE;
+    inode_num            = (dev_size + (bpi - 1)) / bpi;
+    inode_bitmap_blk_num = (inode_num + MOFS_BLK_SIZE * 8 - 1) / (MOFS_BLK_SIZE * 8);
+    inode_table_blk_num  = (inode_num * sizeof(mofs_inode_t) + MOFS_BLK_SIZE - 1) / (MOFS_BLK_SIZE);
+    data_bitmap_blk_num  = (hole_blk_num + MOFS_BLK_SIZE * 8 - 1) / (MOFS_BLK_SIZE * 8);
+    data_blk_num         = hole_blk_num - inode_bitmap_blk_num - data_bitmap_blk_num - inode_table_blk_num - 1;
+
+    /* Clear super, bitmaps and inode table block */
+    for (int i = 0; i < data_blk_num; i++) {
+        ret = clear_blocks(fd, i);
         if (ret != 0) {
-            MOFS_ERR("Get device size error\n");
             goto out2;
         }
     }
 
-    /* Calculate device map */
+    /* Write superblock */
+    superblock.magic              = MOFS_MAGIC_NUM;
+    superblock.hole_blk_num       = dev_size / MOFS_BLK_SIZE;
+    superblock.inode_num          = inode_num;
+    superblock.data_blk_num       = data_blk_num;
+    superblock.inode_bitmap_start = 1;
+    superblock.data_bitmap_start  = superblock.inode_bitmap_start + inode_bitmap_blk_num;
+    superblock.inode_table_start  = superblock.data_bitmap_start + data_bitmap_blk_num;
+    superblock.data_region_start  = superblock.inode_table_start + inode_table_blk_num;
+
+    if (dev_lseek(fd, 0, MOFS_SEEK_SET) < 0) {
+        MOFS_ERR("Seek error at superblock");
+        ret = get_errno();
+        goto out2;
+    }
+
+    if (dev_write(fd, &superblock, sizeof(superblock)) != sizeof(superblock)) {
+        MOFS_ERR("Write error at superblock");
+        ret = get_errno();
+        goto out2;
+    }
+
+    /* Make Root Directory */
 out2:
     dev_close(fd);
 out1:
