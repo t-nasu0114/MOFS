@@ -3,13 +3,13 @@
 
 #include <stdio.h>
 
-/* Ubuntu Only */
+/* Linux Only */
 #define CLR_RESET  "\033[0m"
 #define CLR_RED    "\033[31m"
 #define CLR_YELLOW "\033[33m"
 #define CLR_CYAN   "\033[36m"
 
-/* Ubuntu */
+/* Linux */
 #define MOFS_DBG(fmt, ...) printf(CLR_CYAN "[DBG] " fmt CLR_RESET "", ##__VA_ARGS__)
 #define MOFS_INF(fmt, ...) printf("[INF] " fmt "", ##__VA_ARGS__)
 #define MOFS_WRN(fmt, ...) fprintf(stderr, CLR_YELLOW "[WRN] " fmt CLR_RESET "", ##__VA_ARGS__)
