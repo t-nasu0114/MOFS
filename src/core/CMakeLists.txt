@@ -1,0 +1,9 @@
+
+set(FORMATTER_LIB_NAME mofs_format)
+set(FORMATTER_LIB_NAME ${FORMATTER_LIB_NAME} PARENT_SCOPE)
+
+set(CORE_LIB_NAME mofs_core)
+set(CORE_LIB_NAME ${CORE_LIB_NAME} PARENT_SCOPE)
+
+add_library(${FORMATTER_LIB_NAME} STATIC mofs_format.c)
+target_link_libraries(${FORMATTER_LIB_NAME} PUBLIC ${OS_DEP_LIB_NAME})

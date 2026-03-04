@@ -5,7 +5,7 @@ set(CMAKE_C_STANDARD 99)
 if(ZEPHYR_BASE)
     set(PLATFORM "zephyr")
 else()
-    set(PLATFORM "ubuntu")
+    set(PLATFORM "linux")
 endif()
 
 # Setting for FUSE
@@ -31,15 +31,10 @@ target_include_directories(${EXE_NAME} PRIVATE ${FUSE_INCLUDE_DIRS})
 target_compile_options(${EXE_NAME} PRIVATE ${FUSE_CFLAGS_OTHER})
 
 # build OS dependent part
-set(DEPENDS_PART_PATH "src/dependent")
+add_subdirectory(src/os)
 
-if(${PLATFORM} STREQUAL "zephyr")
-    add_subdirectory(${DEPENDS_PART_PATH}/zephyr)
-elseif(${PLATFORM} STREQUAL "ubuntu")
-    add_subdirectory(${DEPENDS_PART_PATH}/ubuntu)
-else()
-    # TBD
-endif()
+# build core part
+add_subdirectory(src/core)
 
-# build formatter
-add_subdirectory(src/mkfs_mofs)
+# build process
+add_subdirectory(src/proc)
