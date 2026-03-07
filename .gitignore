@@ -7,4 +7,7 @@ build/
 .vscode/
 
 ## local files
-sample.img
+scratch/
+
+## cache files
+.cache/
