@@ -11,18 +11,6 @@
 #include <string.h>
 #include <unistd.h>
 
-typedef struct
-{
-    int   dev_fd;       /* Device file descriptor */
-    char *devfile_path; /* Device file path used by MOFS backend (opened on DEVICE_FILE). */
-} mofs_ctx_t;
-
-static struct fuse_operations op = {
-    .getattr = mofs_getattr,
-    .readdir = mofs_readdir,
-    .read    = mofs_read,
-};
-
 static void print_usage(void)
 {
     printf("Usage: %s DEVICE_FILE MOUNT_POINT\n", SELF_NAME);
@@ -63,24 +51,17 @@ int main(int argc, char *argv[])
     }
 
     /* FUSE main */
-    mofs_ctx_t ctx;
-    int        fuse_argc    = 2;
-    char      *fuse_argv[2] = {argv[0], (char *)mount_point};
-    int        ret          = 0;
-    ctx.devfile_path        = (char *)malloc(sizeof(char) * PATH_MAX);
-    ctx.dev_fd              = open(devfile_path, O_RDWR | O_EXCL);
+    mofs_fuse_ctx_t fuse_ctx;
+#if 1 /* Normal*/
+    int   fuse_argc    = 2;
+    char *fuse_argv[2] = {argv[0], (char *)mount_point};
+#else /* Debug*/
+    int   fuse_argc    = 4;
+    char *fuse_argv[4] = {argv[0], "-f", "-d", (char *)mount_point};
+#endif
+    int ret               = 0;
+    fuse_ctx.devfile_path = (char *)devfile_path;
 
-    if (ctx.devfile_path == NULL) {
-        printf("Fail to allocate memory of strings\n");
-        return 1;
-    } else if (ctx.dev_fd < 0) {
-        printf("Fail to open device file\n");
-        return 1;
-    }
-
-    strncpy(ctx.devfile_path, devfile_path, PATH_MAX);
-    ret = fuse_main(fuse_argc, fuse_argv, &op, &ctx);
-    free(ctx.devfile_path);
-    close(ctx.dev_fd);
+    ret = fuse_main(fuse_argc, fuse_argv, &op, &fuse_ctx);
     return ret;
 }

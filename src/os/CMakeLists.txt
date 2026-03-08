@@ -9,6 +9,7 @@ elseif(${PLATFORM} STREQUAL "linux")
     set(OS_DEP_SRC_LIST
         linux/devio_linux.c
         linux/errno_linux.c
+        linux/mem_linux.c
     )
 else()
     # TBD

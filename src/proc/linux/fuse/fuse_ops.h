@@ -8,11 +8,18 @@
 
 #include <fuse.h>
 
-int mofs_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi);
-int mofs_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
-                 off_t offset, struct fuse_file_info *fi,
-                 enum fuse_readdir_flags flags);
-int mofs_read(const char *path, char *buf, size_t size, off_t offset,
-              struct fuse_file_info *fi);
+void *mofs_init(struct fuse_conn_info *conn, struct fuse_config *cfg);
+void  mofs_destroy(void *private_data);
+int   mofs_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi);
+int   mofs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi,
+                   enum fuse_readdir_flags flags);
+int   mofs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
+
+typedef struct
+{
+    char *devfile_path; /* Device file path used by MOFS backend (opened on DEVICE_FILE). */
+} mofs_fuse_ctx_t;
+
+extern struct fuse_operations op;
 
 #endif /* MOFS_FUSE_OPS_H */

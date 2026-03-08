@@ -7,7 +7,7 @@
 /* Super Block */
 
 #define MOFS_BLK_SIZE  4096U
-#define MOFS_MAGIC_NUM 0x4D4F4653U /* MOFS in ASCII */
+#define MOFS_MAGIC_NUM 0x53464F4DU /* MOFS in ASCII little endian*/
 
 typedef struct mofs_superblock
 {
