@@ -5,7 +5,6 @@
 #include <mofs_devio.h>
 #include <mofs_errno.h>
 #include <mofs_mem.h>
-#include <mofs_struct.h>
 #include <stddef.h>
 #include <string.h>
 
