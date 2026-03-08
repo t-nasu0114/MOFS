@@ -19,3 +19,12 @@ target_compile_definitions(${FUSE_EXE_NAME} PRIVATE FUSE_USE_VERSION=31)
 target_link_libraries(${FUSE_EXE_NAME} PRIVATE ${FUSE_LIBRARIES})
 target_include_directories(${FUSE_EXE_NAME} PRIVATE ${FUSE_INCLUDE_DIRS})
 target_compile_options(${FUSE_EXE_NAME} PRIVATE ${FUSE_CFLAGS_OTHER})
+
+# copy binaries
+add_custom_command(TARGET ${FUSE_EXE_NAME}
+    POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory /home/t-nasu/work/test
+    COMMAND ${CMAKE_COMMAND} -E copy
+            $<TARGET_FILE:${FUSE_EXE_NAME}>
+            /home/t-nasu/work/test/
+)

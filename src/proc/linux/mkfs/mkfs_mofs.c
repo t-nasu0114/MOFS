@@ -5,7 +5,6 @@
 #include <mofs_struct.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <string.h>
 #include <unistd.h>
 
 /* TODO: This extern will be deleted */
