@@ -5,6 +5,7 @@
 #include <mofs_mem.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 /**
  * @brief Read an inode entry from the on-disk inode table.
@@ -14,7 +15,6 @@
  * - Reads one inode-table block from disk.
  * - Copies the target inode entry into the caller-provided structure.
  *
- * @param[in] fd Device file descriptor.
  * @param[in] inode_num Inode number to read (zero-based index in table).
  * @param[out] inode Destination pointer to receive inode data.
  * @return 0 on success.
@@ -22,7 +22,7 @@
  * @return Non-zero errno value from `get_errno()` on seek/read/allocation
  *         failures.
  */
-int mofs_read_inode(int fd, int inode_num, mofs_inode_t *inode)
+int mofs_read_inode(int inode_num, mofs_inode_t *inode)
 {
     int          ret          = 0;
     off_t        blk_offset   = 0;
@@ -32,7 +32,7 @@ int mofs_read_inode(int fd, int inode_num, mofs_inode_t *inode)
     void        *buf          = NULL;
     void        *inode_ptr    = NULL;
 
-    if (fd < 0 || inode_num < 0 || inode == NULL) {
+    if ((inode_num < 0) || (inode == NULL)) {
         ret = MOFS_EINVAL;
     }
 
@@ -43,18 +43,12 @@ int mofs_read_inode(int fd, int inode_num, mofs_inode_t *inode)
         }
     }
 
-    blk_offset = (ctx.sp_blk.inode_table_start * MOFS_BLK_SIZE);
+    blk_offset = ctx.sp_blk.inode_table_start;
     blk_offset += (inode_num * sizeof(mofs_inode_t)) / MOFS_BLK_SIZE;
     inode_offset = (inode_num * sizeof(mofs_inode_t)) % MOFS_BLK_SIZE;
 
     if (ret == 0) {
-        if (dev_lseek(fd, blk_offset, MOFS_SEEK_SET) < 0) {
-            ret = get_errno();
-        }
-    }
-
-    if (ret == 0) {
-        ret = read_continuous_blocks(fd, buf, 1, &read_blk_num, &fraction);
+        ret = read_continuous_blocks(ctx.dev_fd, buf, 1, blk_offset, &read_blk_num, &fraction);
         if ((ret != 0) || (read_blk_num != 1) || (fraction != 0)) {
             ret = get_errno();
         } else {
@@ -84,18 +78,57 @@ int mofs_read_inode(int fd, int inode_num, mofs_inode_t *inode)
  */
 int mofs_path_to_inode_num(const char *path, int *inode_num)
 {
-    int ret    = 0;
-    *inode_num = 0;
+    int   ret              = 0;
+    int   parent_inode_num = 2;
+    int   child_inode_num  = -1;
+    char *path_copy        = NULL;
+    char *component        = NULL;
 
-    if ((path == NULL) || (path[0] != '/')) {
+    if ((path == NULL) || (inode_num == NULL) || (path[0] != '/')) {
+        /* Note : currently supports only the absolute path */
         ret = MOFS_EINVAL;
     }
 
     if (ret == 0) {
-        if ((path[0] == '/') && (path[1] == '\0')) {
+        if (strcmp(path, "/") == 0) {
             *inode_num = 2;
         } else {
-            ret = MOFS_EINVAL;
+            path_copy = mofs_malloc(strlen(path) + 1);
+            component = mofs_malloc(strlen(path) + 1);
+            if ((path_copy == NULL) || (component == NULL)) {
+                ret = get_errno();
+            } else {
+                strcpy(path_copy, path);
+
+                /* find directory entry */
+                char *top_path = strtok(path_copy, "/");
+                while (top_path != NULL) {
+
+                    /* fetch top path component */
+                    strcpy(component, top_path);
+
+                    /* find directory entry in the parent directory */
+                    ret = find_dir_entry(component, parent_inode_num, &child_inode_num);
+                    if ((ret == 0) && (child_inode_num != -1)) {
+                        parent_inode_num = child_inode_num;
+                    } else {
+                        ret = MOFS_ENOENT;
+                        break;
+                    }
+                    top_path = strtok(NULL, "/");
+                }
+
+                if ((ret == 0) && (child_inode_num != -1) && (top_path == NULL)) {
+                    *inode_num = parent_inode_num;
+                }
+            }
+        }
+
+        if (path_copy != NULL) {
+            mofs_free(path_copy);
+        }
+        if (component != NULL) {
+            mofs_free(component);
         }
     }
 

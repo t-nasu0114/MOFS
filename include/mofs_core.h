@@ -99,5 +99,6 @@ extern mofs_ctx_t ctx;
 
 int mofs_init_core(const char *path);
 int mofs_fini_core(void);
+int mofs_getattr_core(const char *path, int *inode_num, mofs_inode_t *inode);
 
 #endif /* __MOFS_CORE__ */

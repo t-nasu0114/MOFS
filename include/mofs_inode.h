@@ -3,7 +3,7 @@
 
 #include <mofs_core.h>
 
-int mofs_read_inode(int fd, int inode_num, mofs_inode_t *inode);
+int mofs_read_inode(int inode_num, mofs_inode_t *inode);
 int mofs_path_to_inode_num(const char *path, int *inode_num);
 
 #endif /* __MOFS_INODE__ */

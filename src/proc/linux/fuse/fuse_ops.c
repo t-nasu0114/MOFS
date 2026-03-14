@@ -85,24 +85,15 @@ int mofs_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi
     mofs_inode_t inode;
     memset(stbuf, 0, sizeof(struct stat));
 
-    /* only root */
-    if ((strcmp(path, "/") == 0) || (strcmp(path, "/.") == 0)) {
-        ret = mofs_path_to_inode_num(path, &inode_num);
-        if (ret == 0) {
-            ret = mofs_read_inode(ctx.dev_fd, inode_num, &inode);
-            if (ret == 0) {
-                stbuf->st_ino   = inode_num;
-                stbuf->st_nlink = inode.i_links;
-                stbuf->st_size  = inode.i_size;
-                stbuf->st_mode  = inode.i_mode;
-                stbuf->st_uid   = inode.i_uid;
-                stbuf->st_gid   = inode.i_gid;
-            }
-        }
-    } else {
-        ret = MOFS_ENOENT;
+    ret = mofs_getattr_core(path, &inode_num, &inode);
+    if (ret == 0) {
+        stbuf->st_ino   = inode_num;
+        stbuf->st_nlink = inode.i_links;
+        stbuf->st_size  = inode.i_size;
+        stbuf->st_mode  = inode.i_mode;
+        stbuf->st_uid   = inode.i_uid;
+        stbuf->st_gid   = inode.i_gid;
     }
-
     return -(mofs_to_os_errno(ret));
 }
 
