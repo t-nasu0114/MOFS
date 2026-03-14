@@ -16,5 +16,6 @@ set(CORE_LIB_NAME ${CORE_LIB_NAME} PARENT_SCOPE)
 add_library(${CORE_LIB_NAME} STATIC
     mofs_core.c
     mofs_util.c
+    mofs_inode.c
 )
 target_link_libraries(${CORE_LIB_NAME} PUBLIC ${OS_DEP_LIB_NAME})

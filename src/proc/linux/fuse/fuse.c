@@ -52,7 +52,7 @@ int main(int argc, char *argv[])
 
     /* FUSE main */
     mofs_fuse_ctx_t fuse_ctx;
-#if 1 /* Normal*/
+#if 0 /* Normal*/
     int   fuse_argc    = 2;
     char *fuse_argv[2] = {argv[0], (char *)mount_point};
 #else /* Debug*/

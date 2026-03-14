@@ -7,6 +7,8 @@
 #include <errno.h>
 #include <fuse.h>
 #include <mofs_core.h>
+#include <mofs_errno.h>
+#include <mofs_inode.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -43,17 +45,30 @@ void mofs_destroy(void *private_data)
 int mofs_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi)
 {
     (void)fi;
+    int          ret       = 0;
+    int          inode_num = 0;
+    mofs_inode_t inode;
     memset(stbuf, 0, sizeof(struct stat));
 
     /* only root */
     if ((strcmp(path, "/") == 0) || (strcmp(path, "/.") == 0)) {
-        stbuf->st_ino   = 2;
-        stbuf->st_nlink = 2;
-        stbuf->st_size  = 4096;
-        stbuf->st_mode  = 0040000U | 0755;
-        return 0;
+        ret = mofs_path_to_inode_num(path, &inode_num);
+        if (ret == 0) {
+            ret = mofs_read_inode(ctx.dev_fd, inode_num, &inode);
+            if (ret == 0) {
+                stbuf->st_ino   = inode_num;
+                stbuf->st_nlink = inode.i_links;
+                stbuf->st_size  = inode.i_size;
+                stbuf->st_mode  = inode.i_mode;
+                stbuf->st_uid   = inode.i_uid;
+                stbuf->st_gid   = inode.i_gid;
+            }
+        }
+    } else {
+        ret = MOFS_ENOENT;
     }
-    return -ENOENT;
+
+    return -(mofs_to_os_errno(ret));
 }
 
 int mofs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi,

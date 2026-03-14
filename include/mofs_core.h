@@ -69,7 +69,7 @@ typedef struct mofs_inode
     uint32_t i_uid;   /* User ID */
     uint32_t i_gid;   /* Group ID */
 
-    uint32_t i_start_blk[MOFS_DATA_BLK_PER_FILE];
+    uint32_t i_data_blk[MOFS_DATA_BLK_PER_FILE]; /* Absolute block number of data blocks */
 } mofs_inode_t;
 
 /* Directory Entry */

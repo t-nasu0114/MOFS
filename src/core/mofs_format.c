@@ -130,12 +130,12 @@ int mofs_format(const char *device_file, int fs_size, int blk_size)
     /* Write root inode to No.2 inode in table */
     mofs_inode_t root_inode;
     memset(&root_inode, 0, sizeof(root_inode));
-    root_inode.i_size         = MOFS_BLK_SIZE;         /* At least one block size */
-    root_inode.i_mode         = MOFS_FTYPE_DIR | 0755; /* Directory with rwx for owner and rx for group and others */
-    root_inode.i_links        = 2;                     /* Link count of root directory is 2 (itself and .) */
-    root_inode.i_uid          = 0;                     /* User ID of root directory is 0 */
-    root_inode.i_gid          = 0;                     /* Group ID of root directory is 0 */
-    root_inode.i_start_blk[0] = superblock.data_region_start; /* The first data block is allocated for root directory */
+    root_inode.i_size        = MOFS_BLK_SIZE;         /* At least one block size */
+    root_inode.i_mode        = MOFS_FTYPE_DIR | 0755; /* Directory with rwx for owner and rx for group and others */
+    root_inode.i_links       = 2;                     /* Link count of root directory is 2 (itself and .) */
+    root_inode.i_uid         = 0;                     /* User ID of root directory is 0 */
+    root_inode.i_gid         = 0;                     /* Group ID of root directory is 0 */
+    root_inode.i_data_blk[0] = superblock.data_region_start; /* The first data block is allocated for root directory */
 
     if (dev_lseek(fd, (superblock.inode_table_start * MOFS_BLK_SIZE) + (2 * sizeof(mofs_inode_t)), MOFS_SEEK_SET) < 0) {
         MOFS_ERR("Seek error at root inode");

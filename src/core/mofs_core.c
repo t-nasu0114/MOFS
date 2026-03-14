@@ -30,13 +30,16 @@ int mofs_init_core(const char *path)
     }
 
     /* Read superblock */
-    void *buf = mofs_malloc(MOFS_BLK_SIZE);
+    unsigned int read_blk_num = 0;
+    size_t       fraction     = 0;
+    void        *buf          = mofs_malloc(MOFS_BLK_SIZE);
     if (buf == NULL) {
         ret = get_errno();
         goto out3;
     }
-    ret = read_continuous_blocks(ctx.dev_fd, buf, 1);
-    if (ret != 0) {
+
+    ret = read_continuous_blocks(ctx.dev_fd, buf, 1, &read_blk_num, &fraction);
+    if ((ret != 0) || (read_blk_num != 1)) {
         ret = get_errno();
         mofs_free(buf);
         goto out3;
