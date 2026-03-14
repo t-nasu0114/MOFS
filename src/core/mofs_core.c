@@ -10,6 +10,25 @@
 
 mofs_ctx_t ctx = {.init = false, .dev_path = NULL, .dev_fd = 0};
 
+/**
+ * @brief Initialize the MOFS core context and load the device superblock.
+ *
+ * Function behavior:
+ * - Stores the device path and opens the target device.
+ * - Reads the superblock from block 0 and validates the magic number.
+ * - Copies the validated superblock fields into the global context `ctx`
+ *   and marks initialization complete (`ctx.init = true`).
+ *
+ * @param[in] path NULL-terminated device path string to open.
+ * @param[out] none No output parameters. The global context `ctx` is updated.
+ * @return 0 on success.
+ * @return Non-zero on failure.
+ *         - Value returned by get_errno(): system-related errors such as
+ *           memory allocation failure, device open failure, or block read
+ *           failure.
+ *         - MOFS_EIO: superblock magic mismatch (for example, unformatted
+ *           device).
+ */
 int mofs_init_core(const char *path)
 {
     int ret = 0;
@@ -77,6 +96,18 @@ out1:
     return ret;
 }
 
+/**
+ * @brief Finalize the MOFS core context and release allocated resources.
+ *
+ * Function behavior:
+ * - Closes the currently opened device.
+ * - Frees the stored device path string.
+ * - Resets the global context `ctx` to an uninitialized state.
+ *
+ * @param[in] none No input parameters.
+ * @param[out] none No output parameters. The global context `ctx` is updated.
+ * @return 0. This function always returns 0.
+ */
 int mofs_fini_core(void)
 {
     dev_close(ctx.dev_fd);

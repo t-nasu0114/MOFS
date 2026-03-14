@@ -6,6 +6,22 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/**
+ * @brief Read an inode entry from the on-disk inode table.
+ *
+ * Function behavior:
+ * - Computes the inode-table block offset and in-block inode offset.
+ * - Reads one inode-table block from disk.
+ * - Copies the target inode entry into the caller-provided structure.
+ *
+ * @param[in] fd Device file descriptor.
+ * @param[in] inode_num Inode number to read (zero-based index in table).
+ * @param[out] inode Destination pointer to receive inode data.
+ * @return 0 on success.
+ * @return MOFS_EINVAL if arguments are invalid.
+ * @return Non-zero errno value from `get_errno()` on seek/read/allocation
+ *         failures.
+ */
 int mofs_read_inode(int fd, int inode_num, mofs_inode_t *inode)
 {
     int          ret          = 0;
@@ -54,6 +70,18 @@ int mofs_read_inode(int fd, int inode_num, mofs_inode_t *inode)
     return ret;
 }
 
+/**
+ * @brief Resolve a filesystem path to an inode number.
+ *
+ * Function behavior:
+ * - Validates the input path format.
+ * - Currently supports only the root path (`"/"`), which is mapped to inode 2.
+ *
+ * @param[in] path NULL-terminated absolute path string.
+ * @param[out] inode_num Destination pointer for the resolved inode number.
+ * @return 0 on success.
+ * @return MOFS_EINVAL if the path is invalid or unsupported.
+ */
 int mofs_path_to_inode_num(const char *path, int *inode_num)
 {
     int ret    = 0;

@@ -4,6 +4,20 @@
 #include <mofs_errno.h>
 #include <stddef.h>
 
+/**
+ * @brief Read exactly one filesystem block from the current device offset.
+ *
+ * Function behavior:
+ * - Calls `dev_read()` for `MOFS_BLK_SIZE` bytes.
+ * - Converts a low-level read error (`-1`) into `0` and reports the error
+ *   code through `err`.
+ *
+ * @param[in] fd Device file descriptor.
+ * @param[out] buf Destination buffer for one block.
+ * @param[out] err Error code storage. Set to 0 on no low-level read error.
+ * @return Number of bytes read (typically `MOFS_BLK_SIZE` or a short read).
+ * @return 0 when `dev_read()` fails with `-1` (details are stored in `*err`).
+ */
 static int read_one_block(int fd, void *buf, int *err)
 {
     int ret = dev_read(fd, buf, MOFS_BLK_SIZE);
@@ -18,6 +32,24 @@ static int read_one_block(int fd, void *buf, int *err)
     return ret;
 }
 
+/**
+ * @brief Read multiple contiguous filesystem blocks from the current offset.
+ *
+ * Function behavior:
+ * - Validates arguments and block alignment of the current file position.
+ * - Repeatedly reads one block until `blk_num` blocks are read, a short read
+ *   occurs, or an error is detected.
+ * - Updates the number of full blocks read and the short-read remainder.
+ *
+ * @param[in] fd Device file descriptor.
+ * @param[out] buf Destination buffer for contiguous blocks.
+ * @param[in] blk_num Number of blocks requested.
+ * @param[out] read_blk_num Number of full blocks successfully read.
+ * @param[out] fraction Number of bytes for a short read in the last attempt.
+ * @return 0 on success (including short-read case; see `fraction`).
+ * @return MOFS_EINVAL if arguments are invalid or offset is not block-aligned.
+ * @return Non-zero errno value from `get_errno()` on read-related failures.
+ */
 int read_continuous_blocks(int fd, void *buf, unsigned int blk_num, unsigned int *read_blk_num, size_t *fraction)
 {
     int err = 0;
@@ -56,6 +88,20 @@ int read_continuous_blocks(int fd, void *buf, unsigned int blk_num, unsigned int
     return ret;
 }
 
+/**
+ * @brief Write exactly one filesystem block at the current device offset.
+ *
+ * Function behavior:
+ * - Calls `dev_write()` for `MOFS_BLK_SIZE` bytes.
+ * - Converts a low-level write error (`-1`) into `0` and reports the error
+ *   code through `err`.
+ *
+ * @param[in] fd Device file descriptor.
+ * @param[in] buf Source buffer containing one block to write.
+ * @param[out] err Error code storage. Set to 0 on no low-level write error.
+ * @return Number of bytes written (typically `MOFS_BLK_SIZE` or a short write).
+ * @return 0 when `dev_write()` fails with `-1` (details are stored in `*err`).
+ */
 static int write_one_block(int fd, void *buf, int *err)
 {
     int ret = dev_write(fd, buf, MOFS_BLK_SIZE);
@@ -70,6 +116,24 @@ static int write_one_block(int fd, void *buf, int *err)
     return ret;
 }
 
+/**
+ * @brief Write multiple contiguous filesystem blocks at the current offset.
+ *
+ * Function behavior:
+ * - Validates arguments and block alignment of the current file position.
+ * - Repeatedly writes one block until `blk_num` blocks are written, a short
+ *   write occurs, or an error is detected.
+ * - Updates the number of full blocks written and the short-write remainder.
+ *
+ * @param[in] fd Device file descriptor.
+ * @param[in] buf Source buffer containing contiguous blocks.
+ * @param[in] blk_num Number of blocks requested to write.
+ * @param[out] written_blk_num Number of full blocks successfully written.
+ * @param[out] fraction Number of bytes for a short write in the last attempt.
+ * @return 0 on success (including short-write case; see `fraction`).
+ * @return MOFS_EINVAL if arguments are invalid or offset is not block-aligned.
+ * @return Non-zero errno value from `get_errno()` on write-related failures.
+ */
 int write_continuous_blocks(int fd, void *buf, unsigned int blk_num, unsigned int *written_blk_num, size_t *fraction)
 {
     int err = 0;
@@ -97,6 +161,8 @@ int write_continuous_blocks(int fd, void *buf, unsigned int blk_num, unsigned in
                 *fraction = ret;
                 ret       = 0;
                 break;
+            } else {
+                ret = 0;
             }
             *written_blk_num = *written_blk_num + 1;
             buf              = (char *)buf + MOFS_BLK_SIZE;

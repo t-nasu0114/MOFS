@@ -7,10 +7,20 @@
 #include <fuse.h>
 #include <linux/limits.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
+/**
+ * @brief Print command usage and supported options.
+ *
+ * Function behavior:
+ * - Prints the required command format.
+ * - Prints supported help options.
+ *
+ * @param[in] none No input parameters.
+ * @param[out] none No output parameters.
+ * @return No return value.
+ */
 static void print_usage(void)
 {
     printf("Usage: %s DEVICE_FILE MOUNT_POINT\n", SELF_NAME);
@@ -18,6 +28,21 @@ static void print_usage(void)
     printf("  -h, --help         Display this help message\n");
 }
 
+/**
+ * @brief Parse CLI arguments and start the FUSE main loop.
+ *
+ * Function behavior:
+ * - Parses `DEVICE_FILE` and `MOUNT_POINT` from command-line arguments.
+ * - Handles help and unknown option cases.
+ * - Builds FUSE arguments and invokes `fuse_main()`.
+ *
+ * @param[in] argc Number of command-line arguments.
+ * @param[in] argv Array of command-line argument strings.
+ * @param[out] none No output parameters.
+ * @return 0 when help is printed successfully.
+ * @return 1 on invalid or missing command-line arguments.
+ * @return Value returned by `fuse_main()` when FUSE is started.
+ */
 int main(int argc, char *argv[])
 {
     const char *mount_point  = NULL;

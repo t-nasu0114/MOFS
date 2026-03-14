@@ -4,9 +4,21 @@
 #include <mofs_errno.h>
 #include <mofs_log.h>
 #include <stdint.h>
-#include <stdlib.h>
 #include <string.h>
 
+/**
+ * @brief Zero-fill one block at the specified block index.
+ *
+ * Function behavior:
+ * - Creates a zeroed block buffer.
+ * - Seeks to the target block offset.
+ * - Writes one full block of zeros to the device.
+ *
+ * @param[in] fd Device file descriptor.
+ * @param[in] block_num Absolute block index to clear.
+ * @return 0 on success.
+ * @return Non-zero errno value from `get_errno()` on seek/write failure.
+ */
 static int clear_blocks(int fd, uint64_t block_num)
 {
     int   ret;
@@ -29,6 +41,22 @@ static int clear_blocks(int fd, uint64_t block_num)
     return ret;
 }
 
+/**
+ * @brief Format a device with MOFS metadata and initialize root directory.
+ *
+ * Function behavior:
+ * - Opens the target device and determines filesystem size.
+ * - Computes MOFS layout (superblock, bitmaps, inode table, data region).
+ * - Clears metadata region blocks and writes the superblock.
+ * - Initializes root inode/data bitmap and writes the root inode entry.
+ *
+ * @param[in] device_file Path to the target device file.
+ * @param[in] fs_size Filesystem size in blocks when > 0; otherwise device size
+ *                    is obtained from `dev_get_size()`.
+ * @param[in] blk_size Reserved format argument (currently unused).
+ * @return 0 on success.
+ * @return Non-zero errno value from `get_errno()` on device I/O failures.
+ */
 int mofs_format(const char *device_file, int fs_size, int blk_size)
 {
     int ret = 0;
