@@ -1,12 +1,24 @@
 
+#include <mofs_core.h>
 #include <mofs_devio.h>
 #include <mofs_errno.h>
 #include <mofs_log.h>
-#include <mofs_struct.h>
 #include <stdint.h>
-#include <stdlib.h>
 #include <string.h>
 
+/**
+ * @brief Zero-fill one block at the specified block index.
+ *
+ * Function behavior:
+ * - Creates a zeroed block buffer.
+ * - Seeks to the target block offset.
+ * - Writes one full block of zeros to the device.
+ *
+ * @param[in] fd Device file descriptor.
+ * @param[in] block_num Absolute block index to clear.
+ * @return 0 on success.
+ * @return Non-zero errno value from `get_errno()` on seek/write failure.
+ */
 static int clear_blocks(int fd, uint64_t block_num)
 {
     int   ret;
@@ -29,6 +41,22 @@ static int clear_blocks(int fd, uint64_t block_num)
     return ret;
 }
 
+/**
+ * @brief Format a device with MOFS metadata and initialize root directory.
+ *
+ * Function behavior:
+ * - Opens the target device and determines filesystem size.
+ * - Computes MOFS layout (superblock, bitmaps, inode table, data region).
+ * - Clears metadata region blocks and writes the superblock.
+ * - Initializes root inode/data bitmap and writes the root inode entry.
+ *
+ * @param[in] device_file Path to the target device file.
+ * @param[in] fs_size Filesystem size in blocks when > 0; otherwise device size
+ *                    is obtained from `dev_get_size()`.
+ * @param[in] blk_size Reserved format argument (currently unused).
+ * @return 0 on success.
+ * @return Non-zero errno value from `get_errno()` on device I/O failures.
+ */
 int mofs_format(const char *device_file, int fs_size, int blk_size)
 {
     int ret = 0;
@@ -130,12 +158,12 @@ int mofs_format(const char *device_file, int fs_size, int blk_size)
     /* Write root inode to No.2 inode in table */
     mofs_inode_t root_inode;
     memset(&root_inode, 0, sizeof(root_inode));
-    root_inode.i_size         = MOFS_BLK_SIZE;         /* At least one block size */
-    root_inode.i_mode         = MOFS_FTYPE_DIR | 0755; /* Directory with rwx for owner and rx for group and others */
-    root_inode.i_links        = 2;                     /* Link count of root directory is 2 (itself and .) */
-    root_inode.i_uid          = 0;                     /* User ID of root directory is 0 */
-    root_inode.i_gid          = 0;                     /* Group ID of root directory is 0 */
-    root_inode.i_start_blk[0] = superblock.data_region_start; /* The first data block is allocated for root directory */
+    root_inode.i_size        = MOFS_BLK_SIZE;         /* At least one block size */
+    root_inode.i_mode        = MOFS_FTYPE_DIR | 0755; /* Directory with rwx for owner and rx for group and others */
+    root_inode.i_links       = 2;                     /* Link count of root directory is 2 (itself and .) */
+    root_inode.i_uid         = 0;                     /* User ID of root directory is 0 */
+    root_inode.i_gid         = 0;                     /* Group ID of root directory is 0 */
+    root_inode.i_data_blk[0] = superblock.data_region_start; /* The first data block is allocated for root directory */
 
     if (dev_lseek(fd, (superblock.inode_table_start * MOFS_BLK_SIZE) + (2 * sizeof(mofs_inode_t)), MOFS_SEEK_SET) < 0) {
         MOFS_ERR("Seek error at root inode");
