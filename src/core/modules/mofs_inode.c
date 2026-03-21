@@ -3,8 +3,8 @@
 #include <mofs_devio.h>
 #include <mofs_errno.h>
 #include <mofs_mem.h>
+#include <mofs_str.h>
 #include <mofs_type.h>
-#include <string.h>
 
 /**
  * @brief Read an inode entry from the on-disk inode table.
@@ -89,22 +89,22 @@ int mofs_path_to_inode_num(const char *path, int *inode_num)
     }
 
     if (ret == 0) {
-        if (strcmp(path, "/") == 0) {
+        if (mofs_strcmp(path, "/") == 0) {
             *inode_num = 2;
         } else {
-            path_copy = mofs_malloc(strlen(path) + 1);
-            component = mofs_malloc(strlen(path) + 1);
+            path_copy = mofs_malloc(mofs_strlen(path) + 1);
+            component = mofs_malloc(mofs_strlen(path) + 1);
             if ((path_copy == NULL) || (component == NULL)) {
                 ret = get_errno();
             } else {
-                strcpy(path_copy, path);
+                mofs_strcpy(path_copy, path);
 
                 /* find directory entry */
-                char *top_path = strtok(path_copy, "/");
+                char *top_path = mofs_strtok(path_copy, "/");
                 while (top_path != NULL) {
 
                     /* fetch top path component */
-                    strcpy(component, top_path);
+                    mofs_strcpy(component, top_path);
 
                     /* find directory entry in the parent directory */
                     ret = find_dir_entry(component, parent_inode_num, &child_inode_num);
@@ -114,7 +114,7 @@ int mofs_path_to_inode_num(const char *path, int *inode_num)
                         ret = MOFS_ENOENT;
                         break;
                     }
-                    top_path = strtok(NULL, "/");
+                    top_path = mofs_strtok(NULL, "/");
                 }
 
                 if ((ret == 0) && (child_inode_num != -1) && (top_path == NULL)) {
