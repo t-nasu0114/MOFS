@@ -2,4 +2,5 @@
 
 int mofs_fstat(int fd, mofs_stat_t *stbuf)
 {
+    return 0;
 }

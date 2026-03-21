@@ -7,6 +7,7 @@
 #include <mofs_core.h>
 #include <mofs_errno.h>
 #include <mofs_inode.h>
+#include <mofs_posix.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -80,19 +81,18 @@ void mofs_destroy(void *private_data)
 int mofs_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi)
 {
     (void)fi;
-    int          ret       = 0;
-    int          inode_num = 0;
-    mofs_inode_t inode;
+    int         ret = 0;
+    mofs_stat_t stat;
     memset(stbuf, 0, sizeof(struct stat));
 
-    ret = mofs_getattr_core(path, &inode_num, &inode);
+    ret = mofs_stat_core(path, &stat);
     if (ret == 0) {
-        stbuf->st_ino   = inode_num;
-        stbuf->st_nlink = inode.i_links;
-        stbuf->st_size  = inode.i_size;
-        stbuf->st_mode  = inode.i_mode;
-        stbuf->st_uid   = inode.i_uid;
-        stbuf->st_gid   = inode.i_gid;
+        stbuf->st_ino   = stat.st_ino;
+        stbuf->st_nlink = stat.st_nlink;
+        stbuf->st_size  = stat.st_size;
+        stbuf->st_mode  = stat.st_mode;
+        stbuf->st_uid   = stat.st_uid;
+        stbuf->st_gid   = stat.st_gid;
     }
     return -(mofs_to_os_errno(ret));
 }
