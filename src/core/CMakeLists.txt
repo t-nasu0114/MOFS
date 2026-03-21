@@ -1,21 +1,19 @@
-
-# Build formatter
-set(FORMATTER_LIB_NAME mofs_format)
-set(FORMATTER_LIB_NAME ${FORMATTER_LIB_NAME} PARENT_SCOPE)
-
-add_library(${FORMATTER_LIB_NAME} STATIC
-    mofs_format.c
-    mofs_util.c
+# Build formatter library
+add_library(${CORE_FORMAT_LIB_NAME} STATIC
+    modules/mofs_format.c
+    modules/mofs_core_util.c
 )
-target_link_libraries(${FORMATTER_LIB_NAME} PUBLIC ${OS_DEP_LIB_NAME})
+target_link_libraries(${CORE_FORMAT_LIB_NAME} PUBLIC ${OS_SERVICE_LIB_NAME})
+target_include_directories(${CORE_FORMAT_LIB_NAME} PUBLIC 
+    ${PLATFORM}/include
+    ./include
+)
 
-# Build core library
-set(CORE_LIB_NAME mofs_core)
-set(CORE_LIB_NAME ${CORE_LIB_NAME} PARENT_SCOPE)
-
+# Build MOFS core library
 add_library(${CORE_LIB_NAME} STATIC
-    mofs_core.c
-    mofs_util.c
-    mofs_inode.c
+    modules/mofs_core.c
+    modules/mofs_core_util.c
+    modules/mofs_inode.c
 )
-target_link_libraries(${CORE_LIB_NAME} PUBLIC ${OS_DEP_LIB_NAME})
+target_link_libraries(${CORE_LIB_NAME} PUBLIC ${OS_SERVICE_LIB_NAME})
+target_include_directories(${CORE_LIB_NAME} PUBLIC ./include)

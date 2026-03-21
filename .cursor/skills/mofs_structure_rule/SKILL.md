@@ -26,12 +26,9 @@ project_root/
 │  ├─ os/
 │  │  ├─ linux/
 │  │  └─ zephyr/
-│  ├─ runtime/           # libc API (memcpy strcmp など) の wrapper
-│  ├─ tools/             # 補助ツール
 │  └─ util/              # 共通ユーティリティ
 ├─ tests/                # テスト
 ├─ examples/             # 使用例
-├─ projects/             # 製品別設定・ビルド差分
 └─ docs/                 # 設計資料
 ```
 
@@ -103,12 +100,6 @@ project_root/
 │  ├─ os/
 │  │  ├─ linux/include/      # Linux依存の情報をインクルードできるヘッダ
 │  │  └─ zephyr/include/     # zephyr依存の情報をインクルードできるヘッダ
-│  │
-│  ├─ projects/
-│  │  ├─ productA/           # 製品A向け設定
-│  │  │  └─ product_conf.h
-│  │  └─ productB/
-│  │     └─ product_conf.h
 │  │
 │  └─ tools/config/include/  # ツール専用ヘッダ
 │     └─ version.h
@@ -184,6 +175,27 @@ include ファイル構成の原則は以下の通り。
 
 汎用製品では `config.h`, `types.h`, `utils.h` のような名前は衝突しやすい。
 そのため `product_config.h`, `hogeostypes.h` のように名前空間を持たせる方が安全。
+
+### 3.3.9. POSIX 標準ヘッダとC標準ヘッダのインクルード
+
+`core` の共通部、公開ヘッダ、POSIX API 層はPOSIX 標準ヘッダとC標準ヘッダをインクルードしてはならない。
+具体的には以下の通り。
+
+```
+project_root/
+├─ include/              # NG
+├─ src/
+│  ├─ core/              # NG
+│  │  ├─ include/
+│  │  └─ modules/
+│  ├─ posix/             # NG
+│  └─ os/                # OK
+│      ├─ linux/
+│      └─ zephyr/
+├─ tests/                # OK
+├─ examples/             # OK
+└─ docs/                 # 設計資料
+```
 
 ### 3.4 ビルド設定の原則
 

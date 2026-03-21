@@ -8,23 +8,37 @@ else()
     set(PLATFORM "linux")
 endif()
 
-# source list
-set(SRC_LIST
-    ./src/main.c
-)
-
-# build executable
-set(EXE_NAME main)
-add_executable(${EXE_NAME} ${SRC_LIST})
-
 # original headers
 include_directories(${PROJECT_SOURCE_DIR}/include)
+# OS dependent headers
+include_directories(src/os/${PLATFORM}/include)
 
-# build OS dependent part
-add_subdirectory(src/os)
+# -----------------------------------------------------------------------------
+# Library setting parts
+# -----------------------------------------------------------------------------
+
+# setting OS service part
+set(OS_SERVICE_LIB_NAME os_service)
+
+# setting core part
+set(CORE_LIB_NAME mofs_core)
+set(CORE_FORMAT_LIB_NAME mofs_format)
+
+# setting POSIX API layer part
+set(POSIX_API_LAYER_LIB_NAME posix_api)
+
+# -----------------------------------------------------------------------------
+# build parts
+# -----------------------------------------------------------------------------
+
+# build OS service part
+add_subdirectory(src/os/${PLATFORM}/service)
 
 # build core part
 add_subdirectory(src/core)
 
-# build process
-add_subdirectory(src/proc)
+# build POSIX API layer part
+add_subdirectory(src/posix)
+
+# build tools part
+add_subdirectory(src/os/${PLATFORM}/tools)
