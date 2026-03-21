@@ -4,8 +4,8 @@
 #include <mofs_errno.h>
 #include <mofs_inode.h>
 #include <mofs_mem.h>
-#include <stddef.h>
-#include <string.h>
+#include <mofs_str.h>
+#include <mofs_type.h>
 
 /**
  * @brief Read exactly one filesystem block from the current device offset.
@@ -299,7 +299,7 @@ int find_dir_entry(char *component, int parent_inode_num, int *child_inode_num)
             }
 
             for (int j = 0; j < dirent_num; j++) {
-                if (strcmp(dirent[j].name, component) == 0) {
+                if (mofs_strcmp(dirent[j].name, component) == 0) {
                     *child_inode_num = dirent[j].inode_num;
                     found            = true;
                     break;

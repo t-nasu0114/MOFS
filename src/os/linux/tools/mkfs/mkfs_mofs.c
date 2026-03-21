@@ -2,7 +2,7 @@
 #include <mofs_core.h>
 #include <mofs_devio.h>
 #include <mofs_errno.h>
-#include <mofs_log.h>
+#include <mofs_util.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>

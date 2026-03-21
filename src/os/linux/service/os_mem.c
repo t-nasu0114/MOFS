@@ -16,3 +16,8 @@ void *mofs_memcpy(void *dest, const void *src, size_t n)
 {
     return memcpy(dest, src, n);
 }
+
+void *mofs_memset(void *s, int c, size_t n)
+{
+    return memset(s, c, n);
+}

@@ -1,10 +1,9 @@
-#include "mofs_util.h"
+#include "mofs_core_util.h"
 #include <mofs_core.h>
 #include <mofs_devio.h>
 #include <mofs_errno.h>
 #include <mofs_mem.h>
-#include <stddef.h>
-#include <stdint.h>
+#include <mofs_type.h>
 #include <string.h>
 
 /**

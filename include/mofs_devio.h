@@ -1,7 +1,7 @@
 #ifndef __MOFS_DEVIO__
 #define __MOFS_DEVIO__
 
-#include <unistd.h>
+#include <mofs_type.h>
 
 /* Original Open Flags */
 #define MOFS_IO_OPEN_FLAG_NONE   0

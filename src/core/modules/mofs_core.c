@@ -1,13 +1,13 @@
 
-#include "mofs_log.h"
-#include "mofs_util.h"
+#include "mofs_core_util.h"
 #include <mofs_core.h>
 #include <mofs_devio.h>
 #include <mofs_errno.h>
 #include <mofs_inode.h>
 #include <mofs_mem.h>
-#include <stddef.h>
-#include <string.h>
+#include <mofs_str.h>
+#include <mofs_type.h>
+#include <mofs_util.h>
 
 mofs_ctx_t ctx = {.init = false, .dev_path = NULL, .dev_fd = 0};
 
@@ -38,13 +38,13 @@ int mofs_init_core(const char *path)
     void        *buf          = NULL;
 
     /* Open device */
-    ctx.dev_path = mofs_malloc(strlen(path) + 1);
+    ctx.dev_path = mofs_malloc(mofs_strlen(path) + 1);
     if (ctx.dev_path == NULL) {
         ret = get_errno();
         goto out1;
     }
 
-    strcpy(ctx.dev_path, path);
+    mofs_strcpy(ctx.dev_path, path);
 
     ctx.dev_fd = dev_open(path, MOFS_IO_OPEN_FLAG_RDWR | MOFS_IO_OPEN_FLAG_SYNC);
     if (ctx.dev_fd < 0) {

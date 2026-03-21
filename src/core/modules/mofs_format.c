@@ -2,9 +2,9 @@
 #include <mofs_core.h>
 #include <mofs_devio.h>
 #include <mofs_errno.h>
-#include <mofs_log.h>
-#include <stdint.h>
-#include <string.h>
+#include <mofs_mem.h>
+#include <mofs_type.h>
+#include <mofs_util.h>
 
 /**
  * @brief Zero-fill one block at the specified block index.
@@ -25,7 +25,7 @@ static int clear_blocks(int fd, uint64_t block_num)
     char  buf[MOFS_BLK_SIZE];
     off_t offset;
 
-    memset(buf, 0, MOFS_BLK_SIZE);
+    mofs_memset(buf, 0, MOFS_BLK_SIZE);
 
     offset = (off_t)block_num * MOFS_BLK_SIZE;
 
@@ -157,7 +157,7 @@ int mofs_format(const char *device_file, int fs_size, int blk_size)
 
     /* Write root inode to No.2 inode in table */
     mofs_inode_t root_inode;
-    memset(&root_inode, 0, sizeof(root_inode));
+    mofs_memset(&root_inode, 0, sizeof(root_inode));
     root_inode.i_size        = MOFS_BLK_SIZE;         /* At least one block size */
     root_inode.i_mode        = MOFS_FTYPE_DIR | 0755; /* Directory with rwx for owner and rx for group and others */
     root_inode.i_links       = 2;                     /* Link count of root directory is 2 (itself and .) */
