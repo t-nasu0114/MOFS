@@ -2,6 +2,7 @@
 #include "mofs_core_util.h"
 #include <mofs_core.h>
 #include <mofs_devio.h>
+#include <mofs_dir.h>
 #include <mofs_errno.h>
 #include <mofs_inode.h>
 #include <mofs_mem.h>
@@ -83,6 +84,12 @@ int mofs_init_core(const char *path)
     ctx.sp_blk.data_region_start  = ((mofs_superblock_t *)buf)->data_region_start;
 
     mofs_free(buf);
+
+    /* Initialize directory handle pool */
+    mofs_memset(dirhandle_pool, 0, sizeof(dirhandle_pool));
+    for (int i = 0; i < MOFS_DIRHANDLE_POOL_SIZE; i++) {
+        dirhandle_pool[i].used = false;
+    }
 
     /* Mark as initalized */
     ctx.init = true;

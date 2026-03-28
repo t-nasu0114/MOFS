@@ -23,14 +23,6 @@
 
 #define MOFS_DATA_BLK_PER_FILE 12U /* Max block number for one file */
 
-/* File type */
-#define MOFS_FTYPE_DIR 0040000U /* Directory.  */
-#define MOFS_FTYPE_REG 0100000U /* Regular file.  */
-
-/* Directory Entry */
-
-#define MOFS_FILENAME_LEN 28
-
 /* Bool type */
 #ifndef bool
 #define bool  unsigned int
@@ -72,13 +64,6 @@ typedef struct mofs_inode
 
     uint32_t i_data_blk[MOFS_DATA_BLK_PER_FILE]; /* Absolute block number of data blocks */
 } mofs_inode_t;
-
-/* Directory Entry */
-typedef struct mofs_dirent
-{
-    char     name[MOFS_FILENAME_LEN];
-    uint32_t inode_num;
-} mofs_dirent_t;
 
 /***************************
  * Context

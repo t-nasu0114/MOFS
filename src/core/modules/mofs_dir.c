@@ -1,10 +1,26 @@
+#include "mofs_core.h"
 #include "mofs_core_util.h"
-#include <mofs_core.h>
+#include <mofs_dir.h>
 #include <mofs_errno.h>
+#include <mofs_file.h>
 #include <mofs_inode.h>
 #include <mofs_mem.h>
 #include <mofs_str.h>
 #include <mofs_type.h>
+#include <stdint.h>
+
+/* Directory handle pool */
+mofs_dirhandle_t dirhandle_pool[MOFS_DIRHANDLE_POOL_SIZE];
+
+static int get_free_dirhandle_index(void)
+{
+    for (int i = 0; i < MOFS_DIRHANDLE_POOL_SIZE; i++) {
+        if (!dirhandle_pool[i].used) {
+            return i;
+        }
+    }
+    return -1;
+}
 
 /**
  * @brief Find a named directory entry under a parent directory inode.
@@ -86,5 +102,150 @@ out2:
         mofs_free(buf);
     }
 out1:
+    return ret;
+}
+
+int mofs_dir_open(const char *path, mofs_dirhandle_t **handle)
+{
+    int          ret       = 0;
+    int          inode_num = 0;
+    mofs_inode_t inode;
+    int          index = 0;
+
+    if ((path == NULL) || (handle == NULL)) {
+        ret = MOFS_EINVAL;
+    } else {
+        *handle = NULL;
+    }
+
+    if (ret == 0) {
+        ret = mofs_path_to_inode_num(path, &inode_num);
+        if (ret == 0) {
+            mofs_memset(&inode, 0, sizeof(mofs_inode_t));
+            ret = mofs_read_inode(inode_num, &inode);
+            if (ret == 0) {
+                if (inode.i_mode & MOFS_FTYPE_DIR) {
+                    ret = 0;
+                } else {
+                    ret = MOFS_ENOTDIR;
+                }
+            }
+        }
+    }
+
+    if (ret == 0) {
+        index = get_free_dirhandle_index();
+        if (index == -1) {
+            ret = MOFS_ENFILE;
+        } else {
+            *handle                             = &dirhandle_pool[index];
+            dirhandle_pool[index].inode_num     = inode_num;
+            dirhandle_pool[index].dirent_offset = 0;
+            dirhandle_pool[index].used          = true;
+        }
+    }
+
+    return ret;
+}
+
+int mofs_dir_close(mofs_dirhandle_t **handle)
+{
+    int ret = 0;
+
+    if ((handle == NULL) || (*handle == NULL) || ((*handle)->used == false)) {
+        ret = MOFS_EINVAL;
+    } else {
+        (*handle)->inode_num     = 0;
+        (*handle)->dirent_offset = 0;
+        (*handle)->used          = false;
+        *handle                  = NULL;
+    }
+    return ret;
+}
+
+int mofs_dir_read(mofs_dirhandle_t **handle, mofs_dirent_t *dirent)
+{
+    int            ret = 0;
+    mofs_inode_t   inode;
+    mofs_dirent_t *buf = NULL;
+    mofs_dirent_t  dirent_tmp;
+    size_t         fraction = 0;
+    unsigned int   start_block;
+    unsigned int   start_idx;
+    unsigned int   entries_num;
+    bool           found = false;
+
+    if ((handle == NULL) || (*handle == NULL) || (dirent == NULL) || ((*handle)->used == false)) {
+        ret = MOFS_EINVAL;
+    }
+
+    if (ret == 0) {
+        buf = (mofs_dirent_t *)mofs_malloc(MOFS_BLK_SIZE);
+        if (buf == NULL) {
+            ret = get_errno();
+        }
+    }
+
+    if (ret == 0) {
+        ret = mofs_read_inode((*handle)->inode_num, &inode);
+        if (ret == 0) {
+            if (!(inode.i_mode & MOFS_FTYPE_DIR)) {
+                ret = MOFS_ENOTDIR;
+            } else {
+                /* Read the directory data block */
+
+                /* Calculate the start block and index */
+                start_block = (*handle)->dirent_offset / (MOFS_BLK_SIZE / sizeof(mofs_dirent_t));
+                start_idx   = (*handle)->dirent_offset % (MOFS_BLK_SIZE / sizeof(mofs_dirent_t));
+
+                for (; start_block < (inode.i_size + MOFS_BLK_SIZE - 1) / MOFS_BLK_SIZE; start_block++) {
+                    /* Read the directory data block */
+                    ret = read_file_data_block((*handle)->inode_num, buf, start_block, &fraction);
+
+                    /* Find the directory entry in the buffer */
+                    if (ret == 0) {
+                        if (fraction != 0) {
+                            entries_num = fraction / sizeof(mofs_dirent_t);
+                        } else {
+                            entries_num = MOFS_BLK_SIZE / sizeof(mofs_dirent_t);
+                        }
+
+                        for (; start_idx < entries_num; start_idx++) {
+                            mofs_memcpy(&dirent_tmp, buf + start_idx, sizeof(mofs_dirent_t));
+                            if ((dirent_tmp.inode_num != 0) && (dirent_tmp.name[0] != '\0')) {
+                                found = true;
+                                break;
+                            }
+                        }
+                        /* Reset the index for the next block */
+                        if (found == false) {
+                            start_idx = 0;
+                        }
+                    } else {
+                        break;
+                    }
+
+                    if (found == true) {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if (ret == 0) {
+        if (found == true) {
+            mofs_memcpy(dirent, &dirent_tmp, sizeof(mofs_dirent_t));
+            (*handle)->dirent_offset = start_block * (MOFS_BLK_SIZE / sizeof(mofs_dirent_t)) + start_idx + 1U;
+        } else {
+            /* EOF is not error.*/
+            mofs_memset(dirent, 0, sizeof(mofs_dirent_t));
+        }
+    }
+
+    if (buf != NULL) {
+        mofs_free(buf);
+    }
+
     return ret;
 }

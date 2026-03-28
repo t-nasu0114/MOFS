@@ -16,6 +16,7 @@ add_library(${CORE_LIB_NAME} STATIC
     modules/mofs_inode.c
     modules/mofs_dir.c
     modules/mofs_path.c
+    modules/mofs_file.c
 )
 target_link_libraries(${CORE_LIB_NAME} PUBLIC ${OS_SERVICE_LIB_NAME})
 target_include_directories(${CORE_LIB_NAME} PUBLIC ./include)

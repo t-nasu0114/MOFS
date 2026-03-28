@@ -1,6 +1,50 @@
 #ifndef __MOFS_DIR__
 #define __MOFS_DIR__
 
+/*******************************************************
+ * includes
+ *******************************************************/
+
+#include <mofs_file.h>
+#include <mofs_type.h>
+
+/*******************************************************
+ * macros
+ *******************************************************/
+
+/* Directory handle pool size */
+#define MOFS_DIRHANDLE_POOL_SIZE 64U
+
+/*******************************************************
+ * structs
+ *******************************************************/
+
+/* Directory Entry */
+typedef struct mofs_dirent
+{
+    char     name[MOFS_FILENAME_LEN];
+    uint32_t inode_num;
+} mofs_dirent_t;
+
+/* Directory handle */
+typedef struct mofs_dirhandle
+{
+    bool         used;
+    int          inode_num;
+    unsigned int dirent_offset;
+} mofs_dirhandle_t;
+
+/* Directory handle pool */
+extern mofs_dirhandle_t dirhandle_pool[MOFS_DIRHANDLE_POOL_SIZE];
+
+/*******************************************************
+ * functions
+ *******************************************************/
+
 int find_dir_entry(char *component, int parent_inode_num, int *child_inode_num);
+
+int mofs_dir_open(const char *path, mofs_dirhandle_t **handle);
+int mofs_dir_close(mofs_dirhandle_t **handle);
+int mofs_dir_read(mofs_dirhandle_t **handle, mofs_dirent_t *dirent);
 
 #endif /* __MOFS_DIR__ */
