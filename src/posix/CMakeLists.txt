@@ -4,3 +4,6 @@ set(POSIX_API_LAYER_SRC_LIST
 
 add_library(${POSIX_API_LAYER_LIB_NAME} STATIC ${POSIX_API_LAYER_SRC_LIST})
 
+target_include_directories(${POSIX_API_LAYER_LIB_NAME} PUBLIC 
+    ../core/include
+)

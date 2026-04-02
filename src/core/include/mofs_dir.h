@@ -29,9 +29,10 @@ typedef struct mofs_dirent
 /* Directory handle */
 typedef struct mofs_dirhandle
 {
-    bool         used;
-    int          inode_num;
-    unsigned int dirent_offset;
+    bool          used;
+    int           inode_num;
+    unsigned int  dirent_offset;
+    mofs_dirent_t dirent_buf;
 } mofs_dirhandle_t;
 
 /* Directory handle pool */
@@ -43,8 +44,8 @@ extern mofs_dirhandle_t dirhandle_pool[MOFS_DIRHANDLE_POOL_SIZE];
 
 int find_dir_entry(char *component, int parent_inode_num, int *child_inode_num);
 
-int mofs_dir_open(const char *path, mofs_dirhandle_t **handle);
-int mofs_dir_close(mofs_dirhandle_t **handle);
-int mofs_dir_read(mofs_dirhandle_t **handle, mofs_dirent_t *dirent);
+int mofs_opendir_core(const char *path, mofs_dirhandle_t **handle);
+int mofs_closedir_core(mofs_dirhandle_t **handle);
+int mofs_readdir_core(mofs_dirhandle_t **handle);
 
 #endif /* __MOFS_DIR__ */

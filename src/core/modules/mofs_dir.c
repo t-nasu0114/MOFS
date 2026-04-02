@@ -105,7 +105,24 @@ out1:
     return ret;
 }
 
-int mofs_dir_open(const char *path, mofs_dirhandle_t **handle)
+/**
+ * @brief Open a directory and allocate an internal directory handle.
+ *
+ * Function behavior:
+ * - Validates arguments and resolves `path` to an inode number.
+ * - Verifies that the resolved inode is a directory.
+ * - Allocates one entry from the global directory-handle pool and
+ *   initializes cursor/cache fields for subsequent `readdir`.
+ *
+ * @param[in] path NULL-terminated absolute directory path.
+ * @param[out] handle Destination pointer to receive an opened handle.
+ * @return 0 on success.
+ * @return MOFS_EINVAL if arguments are invalid.
+ * @return MOFS_ENOTDIR if `path` does not point to a directory.
+ * @return MOFS_ENFILE when no free handle entry is available.
+ * @return Non-zero errno value propagated from path/inode resolution.
+ */
+int mofs_opendir_core(const char *path, mofs_dirhandle_t **handle)
 {
     int          ret       = 0;
     int          inode_num = 0;
@@ -141,6 +158,7 @@ int mofs_dir_open(const char *path, mofs_dirhandle_t **handle)
             *handle                             = &dirhandle_pool[index];
             dirhandle_pool[index].inode_num     = inode_num;
             dirhandle_pool[index].dirent_offset = 0;
+            dirhandle_pool[index].dirent_buf    = (mofs_dirent_t){0};
             dirhandle_pool[index].used          = true;
         }
     }
@@ -148,7 +166,19 @@ int mofs_dir_open(const char *path, mofs_dirhandle_t **handle)
     return ret;
 }
 
-int mofs_dir_close(mofs_dirhandle_t **handle)
+/**
+ * @brief Close an opened directory handle and release pool entry.
+ *
+ * Function behavior:
+ * - Validates the handle pointer and opened state.
+ * - Clears inode/cursor/cache fields and marks the pool slot unused.
+ * - Sets caller handle pointer to NULL to prevent stale reuse.
+ *
+ * @param[in,out] handle Pointer to an opened directory handle pointer.
+ * @return 0 on success.
+ * @return MOFS_EINVAL if `handle` is invalid or not opened.
+ */
+int mofs_closedir_core(mofs_dirhandle_t **handle)
 {
     int ret = 0;
 
@@ -157,13 +187,30 @@ int mofs_dir_close(mofs_dirhandle_t **handle)
     } else {
         (*handle)->inode_num     = 0;
         (*handle)->dirent_offset = 0;
+        (*handle)->dirent_buf    = (mofs_dirent_t){0};
         (*handle)->used          = false;
         *handle                  = NULL;
     }
     return ret;
 }
 
-int mofs_dir_read(mofs_dirhandle_t **handle, mofs_dirent_t *dirent)
+/**
+ * @brief Read the next valid directory entry from an opened directory handle.
+ *
+ * Function behavior:
+ * - Validates the handle and reads directory inode metadata.
+ * - Scans directory data blocks from the current cursor position.
+ * - Skips unused entries and stores the next valid entry in `dirent_buf`.
+ * - Advances the cursor on success. At end-of-directory, stores a zeroed
+ *   entry in `dirent_buf` and returns success (EOF is not an error).
+ *
+ * @param[in,out] handle Pointer to an opened directory handle pointer.
+ * @return 0 on success (including EOF).
+ * @return MOFS_EINVAL if `handle` is invalid.
+ * @return MOFS_ENOTDIR if target inode is not a directory.
+ * @return Non-zero errno value on memory or block-read failures.
+ */
+int mofs_readdir_core(mofs_dirhandle_t **handle)
 {
     int            ret = 0;
     mofs_inode_t   inode;
@@ -175,7 +222,7 @@ int mofs_dir_read(mofs_dirhandle_t **handle, mofs_dirent_t *dirent)
     unsigned int   entries_num;
     bool           found = false;
 
-    if ((handle == NULL) || (*handle == NULL) || (dirent == NULL) || ((*handle)->used == false)) {
+    if ((handle == NULL) || (*handle == NULL) || ((*handle)->used == false)) {
         ret = MOFS_EINVAL;
     }
 
@@ -235,11 +282,11 @@ int mofs_dir_read(mofs_dirhandle_t **handle, mofs_dirent_t *dirent)
 
     if (ret == 0) {
         if (found == true) {
-            mofs_memcpy(dirent, &dirent_tmp, sizeof(mofs_dirent_t));
+            mofs_memcpy(&(*handle)->dirent_buf, &dirent_tmp, sizeof(mofs_dirent_t));
             (*handle)->dirent_offset = start_block * (MOFS_BLK_SIZE / sizeof(mofs_dirent_t)) + start_idx + 1U;
         } else {
             /* EOF is not error.*/
-            mofs_memset(dirent, 0, sizeof(mofs_dirent_t));
+            mofs_memset(&(*handle)->dirent_buf, 0, sizeof(mofs_dirent_t));
         }
     }
 
