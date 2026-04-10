@@ -7,16 +7,17 @@
 #include <mofs_core.h>
 #include <mofs_errno.h>
 #include <mofs_inode.h>
+#include <mofs_posix.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 struct fuse_operations op = {
-    .init    = mofs_init,
-    .destroy = mofs_destroy,
-    .getattr = mofs_getattr,
-    .readdir = mofs_readdir,
-    .read    = mofs_read,
+    .init    = mofs_init_fuse,
+    .destroy = mofs_destroy_fuse,
+    .getattr = mofs_getattr_fuse,
+    .readdir = mofs_readdir_fuse,
+    .read    = mofs_read_fuse,
 };
 
 /**
@@ -32,7 +33,7 @@ struct fuse_operations op = {
  * @param[out] none No output parameters.
  * @return Pointer to FUSE private data on success.
  */
-void *mofs_init(struct fuse_conn_info *conn, struct fuse_config *cfg)
+void *mofs_init_fuse(struct fuse_conn_info *conn, struct fuse_config *cfg)
 {
     int ret = 0;
     (void)conn;
@@ -57,7 +58,7 @@ void *mofs_init(struct fuse_conn_info *conn, struct fuse_config *cfg)
  * @param[out] none No output parameters.
  * @return No return value.
  */
-void mofs_destroy(void *private_data)
+void mofs_destroy_fuse(void *private_data)
 {
     (void)private_data;
     mofs_fini_core();
@@ -77,22 +78,21 @@ void mofs_destroy(void *private_data)
  * @return 0 on success.
  * @return Negative errno value on failure.
  */
-int mofs_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi)
+int mofs_getattr_fuse(const char *path, struct stat *stbuf, struct fuse_file_info *fi)
 {
     (void)fi;
-    int          ret       = 0;
-    int          inode_num = 0;
-    mofs_inode_t inode;
+    int         ret = 0;
+    mofs_stat_t stat;
     memset(stbuf, 0, sizeof(struct stat));
 
-    ret = mofs_getattr_core(path, &inode_num, &inode);
+    ret = mofs_stat_core(path, &stat);
     if (ret == 0) {
-        stbuf->st_ino   = inode_num;
-        stbuf->st_nlink = inode.i_links;
-        stbuf->st_size  = inode.i_size;
-        stbuf->st_mode  = inode.i_mode;
-        stbuf->st_uid   = inode.i_uid;
-        stbuf->st_gid   = inode.i_gid;
+        stbuf->st_ino   = stat.st_ino;
+        stbuf->st_nlink = stat.st_nlink;
+        stbuf->st_size  = stat.st_size;
+        stbuf->st_mode  = stat.st_mode;
+        stbuf->st_uid   = stat.st_uid;
+        stbuf->st_gid   = stat.st_gid;
     }
     return -(mofs_to_os_errno(ret));
 }
@@ -113,8 +113,8 @@ int mofs_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *fi
  * @return 0 on success.
  * @return -ENOENT if the path is not supported.
  */
-int mofs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi,
-                 enum fuse_readdir_flags flags)
+int mofs_readdir_fuse(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi,
+                      enum fuse_readdir_flags flags)
 {
     (void)filler;
     (void)offset;
@@ -144,7 +144,7 @@ int mofs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offs
  * @return Negative OS errno for `MOFS_ENOSYS` because this operation is not
  *         implemented.
  */
-int mofs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
+int mofs_read_fuse(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
     (void)path;
     (void)buf;

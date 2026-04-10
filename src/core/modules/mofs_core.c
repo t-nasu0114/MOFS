@@ -2,9 +2,11 @@
 #include "mofs_core_util.h"
 #include <mofs_core.h>
 #include <mofs_devio.h>
+#include <mofs_dir.h>
 #include <mofs_errno.h>
 #include <mofs_inode.h>
 #include <mofs_mem.h>
+#include <mofs_posix.h>
 #include <mofs_str.h>
 #include <mofs_type.h>
 #include <mofs_util.h>
@@ -83,6 +85,12 @@ int mofs_init_core(const char *path)
 
     mofs_free(buf);
 
+    /* Initialize directory handle pool */
+    mofs_memset(dirhandle_pool, 0, sizeof(dirhandle_pool));
+    for (int i = 0; i < MOFS_DIRHANDLE_POOL_SIZE; i++) {
+        dirhandle_pool[i].used = false;
+    }
+
     /* Mark as initalized */
     ctx.init = true;
     return 0;
@@ -129,28 +137,38 @@ int mofs_fini_core(void)
  * - Reads inode contents for the resolved inode number.
  *
  * @param[in] path NULL-terminated absolute path string.
- * @param[out] inode_num Destination pointer for resolved inode number.
- * @param[out] inode Destination pointer to receive inode metadata.
+ * @param[out] stbuf Destination pointer for resolved inode number.
  * @return 0 on success.
  * @return MOFS_EINVAL if any argument is invalid.
- * @return Non-zero error returned by `mofs_path_to_inode_num()` or
- *         `mofs_read_inode()` when lookup/read fails.
+ * @return Non-zero error returned by `mofs_path_to_inode_num()` or `mofs_read_inode()`
+ *         when lookup/read fails.
  */
-int mofs_getattr_core(const char *path, int *inode_num, mofs_inode_t *inode)
+int mofs_stat_core(const char *path, mofs_stat_t *stbuf)
 {
-    int ret = 0;
+    int          ret       = 0;
+    int          inode_num = -1;
+    mofs_inode_t inode;
 
-    if ((path == NULL) || (inode_num == NULL) || (inode == NULL)) {
+    if ((path == NULL) || (stbuf == NULL)) {
         ret = MOFS_EINVAL;
     }
 
     /* search inode number from path */
     if (ret == 0) {
-        (*inode_num) = -1;
+        mofs_memset(stbuf, 0, sizeof(mofs_stat_t));
+        mofs_memset(&inode, 0, sizeof(mofs_inode_t));
 
-        ret = mofs_path_to_inode_num(path, inode_num);
+        ret = mofs_path_to_inode_num(path, &inode_num);
         if (ret == 0) {
-            ret = mofs_read_inode(*inode_num, inode);
+            ret = mofs_read_inode(inode_num, &inode);
+            if (ret == 0) {
+                stbuf->st_ino   = inode_num;
+                stbuf->st_nlink = inode.i_links;
+                stbuf->st_size  = inode.i_size;
+                stbuf->st_mode  = inode.i_mode;
+                stbuf->st_uid   = inode.i_uid;
+                stbuf->st_gid   = inode.i_gid;
+            }
         }
     }
 

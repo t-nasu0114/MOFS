@@ -63,6 +63,7 @@ MOFS の実装を行うときに使います。
 - ファイルシステムの入口に近い操作で `include/mofs_core.h` に載せる API は、初期化・属性取得など `_core` サフィックスの名前（`mofs_init_core`, `mofs_getattr_core`, `mofs_readdir_core`）になっている。
 - ブロック単位のヘルパやパス解決の内部処理は `mofs_util.h` / `mofs_util.c` に集約し、必要な `.c` は `"mofs_util.h"` でインクルードする。
 - `mofs_format` は `mofs_format.c` で定義されているが、現状トップレベル `include/` には宣言がなく、`mkfs` 側で `extern` 宣言している（移行予定のコメントあり）。新規コードではこのずれを踏まえるか、ヘッダに載せるなど方針を揃える。
+- ここに実装される関数は POSIX に近い実装としておく。
 
 ### 3.2 `src/os/linux`（OS 抽象の Linux 実装）
 
