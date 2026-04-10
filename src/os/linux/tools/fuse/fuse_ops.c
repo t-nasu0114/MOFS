@@ -3,6 +3,7 @@
  */
 
 #include "fuse_ops.h"
+#include <errno.h>
 #include <fuse.h>
 #include <mofs_core.h>
 #include <mofs_errno.h>
@@ -116,18 +117,68 @@ int mofs_getattr_fuse(const char *path, struct stat *stbuf, struct fuse_file_inf
 int mofs_readdir_fuse(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi,
                       enum fuse_readdir_flags flags)
 {
-    (void)filler;
-    (void)offset;
-    (void)fi;
-    (void)flags;
+    int               ret     = 0;
+    off_t             cursor  = 0;
+    mofs_dirhandle_t *handle  = NULL;
+    mofs_dirent_t    *dirent  = NULL;
 
-    /* return root dir */
-    if ((strcmp(path, "/") == 0) || (strcmp(path, "/.") == 0)) {
-        filler(buf, ".", NULL, 0, 0);
-        filler(buf, "..", NULL, 0, 0);
-        return 0;
+    (void)flags;
+    (void)fi;
+
+    if ((path == NULL) || (buf == NULL) || (filler == NULL) || (offset < 0)) {
+        return -(mofs_to_os_errno(MOFS_EINVAL));
     }
-    return -(mofs_to_os_errno(MOFS_ENOENT));
+
+    handle = mofs_opendir(path);
+    if (handle == NULL) {
+        return -errno;
+    }
+
+    /* offset is a readdir cookie, not byte offset. */
+    if (offset <= cursor) {
+        cursor++;
+        if (filler(buf, ".", NULL, cursor, 0) != 0) {
+            goto out;
+        }
+    } else {
+        cursor++;
+    }
+
+    if (offset <= cursor) {
+        cursor++;
+        if (filler(buf, "..", NULL, cursor, 0) != 0) {
+            goto out;
+        }
+    } else {
+        cursor++;
+    }
+
+    while (true) {
+        errno = 0;
+        dirent = mofs_readdir(handle);
+        if (dirent == NULL) {
+            if (errno != 0) {
+                ret = -errno;
+            }
+            break;
+        }
+
+        if (offset > cursor) {
+            cursor++;
+            continue;
+        }
+
+        cursor++;
+        if (filler(buf, dirent->name, NULL, cursor, 0) != 0) {
+            break;
+        }
+    }
+
+out:
+    if ((mofs_closedir(handle) != 0) && (ret == 0)) {
+        ret = -errno;
+    }
+    return ret;
 }
 
 /**

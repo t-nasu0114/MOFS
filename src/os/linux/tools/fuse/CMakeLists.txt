@@ -8,10 +8,11 @@ set(FUSE_EXE_NAME mofs)
 
 add_executable(${FUSE_EXE_NAME} fuse.c fuse_ops.c)
 
-add_dependencies(${FUSE_EXE_NAME} ${OS_DEP_LIB_NAME} ${CORE_LIB_NAME})
+add_dependencies(${FUSE_EXE_NAME} ${OS_DEP_LIB_NAME} ${CORE_LIB_NAME} ${POSIX_API_LAYER_LIB_NAME})
 target_link_libraries(${FUSE_EXE_NAME}
     PRIVATE ${OS_DEP_LIB_NAME}
     PRIVATE ${CORE_LIB_NAME}
+    PRIVATE ${POSIX_API_LAYER_LIB_NAME}
 )
 target_compile_definitions(${FUSE_EXE_NAME} PRIVATE SELF_NAME=\"${FUSE_EXE_NAME}\")
 
