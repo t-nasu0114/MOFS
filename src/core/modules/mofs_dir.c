@@ -46,6 +46,7 @@ int find_dir_entry(char *component, int parent_inode_num, int *child_inode_num)
     void        *buf            = NULL;
     size_t       fraction       = 0;
     mofs_inode_t inode_buf;
+    unsigned int read_blk_num = 0;
 
     if ((component == NULL) || (parent_inode_num < 0) || (child_inode_num == NULL)) {
         ret = MOFS_EINVAL;
@@ -65,8 +66,8 @@ int find_dir_entry(char *component, int parent_inode_num, int *child_inode_num)
     parent_blk_num = (inode_buf.i_size + MOFS_BLK_SIZE - 1) / MOFS_BLK_SIZE;
 
     for (int i = 0; i < parent_blk_num; i++) {
-        ret = read_file_data_block(parent_inode_num, buf, i, &fraction);
-        if ((ret != 0) && (fraction == 0)) {
+        ret = read_file_data_block(parent_inode_num, buf, i, 1, &read_blk_num, &fraction);
+        if (ret != 0) {
             break;
         } else {
             mofs_dirent_t *dirent = (mofs_dirent_t *)buf;
@@ -220,7 +221,8 @@ int mofs_readdir_core(mofs_dirhandle_t **handle)
     unsigned int   start_block;
     unsigned int   start_idx;
     unsigned int   entries_num;
-    bool           found = false;
+    bool           found        = false;
+    unsigned int   read_blk_num = 0;
 
     if ((handle == NULL) || (*handle == NULL) || ((*handle)->used == false)) {
         ret = MOFS_EINVAL;
@@ -247,7 +249,7 @@ int mofs_readdir_core(mofs_dirhandle_t **handle)
 
                 for (; start_block < (inode.i_size + MOFS_BLK_SIZE - 1) / MOFS_BLK_SIZE; start_block++) {
                     /* Read the directory data block */
-                    ret = read_file_data_block((*handle)->inode_num, buf, start_block, &fraction);
+                    ret = read_file_data_block((*handle)->inode_num, buf, start_block, 1, &read_blk_num, &fraction);
 
                     /* Find the directory entry in the buffer */
                     if (ret == 0) {

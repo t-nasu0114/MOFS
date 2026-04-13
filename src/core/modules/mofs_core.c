@@ -4,6 +4,7 @@
 #include <mofs_devio.h>
 #include <mofs_dir.h>
 #include <mofs_errno.h>
+#include <mofs_file.h>
 #include <mofs_inode.h>
 #include <mofs_mem.h>
 #include <mofs_posix.h>
@@ -89,6 +90,12 @@ int mofs_init_core(const char *path)
     mofs_memset(dirhandle_pool, 0, sizeof(dirhandle_pool));
     for (int i = 0; i < MOFS_DIRHANDLE_POOL_SIZE; i++) {
         dirhandle_pool[i].used = false;
+    }
+
+    /* Initialize file handle pool */
+    mofs_memset(filehandle_pool, 0, sizeof(filehandle_pool));
+    for (int i = 0; i < MOFS_FILEHANDLE_POOL_SIZE; i++) {
+        filehandle_pool[i].used = false;
     }
 
     /* Mark as initalized */
