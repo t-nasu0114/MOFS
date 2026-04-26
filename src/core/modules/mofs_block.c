@@ -125,7 +125,7 @@ static int write_one_block(int fd, const void *buf, int *err)
 }
 
 /**
- * @brief Write multiple contiguous filesystem blocks at the current offset.
+ * @brief Write multiple contiguous filesystem blocks.
  *
  * Function behavior:
  * - Validates arguments and block alignment of the current file position.
@@ -135,14 +135,16 @@ static int write_one_block(int fd, const void *buf, int *err)
  *
  * @param[in] fd Device file descriptor.
  * @param[in] buf Source buffer containing contiguous blocks.
- * @param[in] blk_num Number of blocks requested to write.
+ * @param[in] req_blk_num Number of blocks requested to write.
+ * @param[in] start_blk_num Starting block number.
  * @param[out] written_blk_num Number of full blocks successfully written.
  * @param[out] fraction Number of bytes for a short write in the last attempt.
  * @return 0 on success (including short-write case; see `fraction`).
  * @return MOFS_EINVAL if arguments are invalid or offset is not block-aligned.
  * @return Non-zero errno value from `get_errno()` on write-related failures.
  */
-int write_continuous_blocks(int fd, void *buf, unsigned int blk_num, unsigned int *written_blk_num, size_t *fraction)
+int write_continuous_blocks(int fd, const void *buf, unsigned int req_blk_num, unsigned int start_blk_num,
+                            unsigned int *written_blk_num, size_t *fraction)
 {
     int err = 0;
     int ret = 0;
@@ -153,7 +155,7 @@ int write_continuous_blocks(int fd, void *buf, unsigned int blk_num, unsigned in
 
     /* Align check */
     if (ret == 0) {
-        off_t offset = dev_lseek(fd, 0, MOFS_SEEK_CUR);
+        off_t offset = dev_lseek(fd, start_blk_num * MOFS_BLK_SIZE, MOFS_SEEK_SET);
         if (offset < 0) {
             ret = get_errno();
         } else if ((offset % MOFS_BLK_SIZE) != 0) {
@@ -166,7 +168,7 @@ int write_continuous_blocks(int fd, void *buf, unsigned int blk_num, unsigned in
         *written_blk_num = 0U;
 
         if (ret == 0) {
-            for (int i = 0; i < blk_num; i++) {
+            for (int i = 0; i < req_blk_num; i++) {
                 ret = write_one_block(fd, buf, &err);
                 if (ret == 0) {
                     ret = err;
