@@ -3,8 +3,10 @@
  */
 
 #include "fuse_ops.h"
+#include <fcntl.h>
 #include <errno.h>
 #include <fuse.h>
+#include <stdint.h>
 #include <mofs_core.h>
 #include <mofs_errno.h>
 #include <mofs_inode.h>
@@ -17,6 +19,8 @@ struct fuse_operations op = {
     .init    = mofs_init_fuse,
     .destroy = mofs_destroy_fuse,
     .getattr = mofs_getattr_fuse,
+    .open    = mofs_open_fuse,
+    .release = mofs_release_fuse,
     .readdir = mofs_readdir_fuse,
     .read    = mofs_read_fuse,
 };
@@ -96,6 +100,95 @@ int mofs_getattr_fuse(const char *path, struct stat *stbuf, struct fuse_file_inf
         stbuf->st_gid   = stat.st_gid;
     }
     return -(mofs_to_os_errno(ret));
+}
+
+/**
+ * @brief Open a file and cache handle in FUSE file info.
+ *
+ * Function behavior:
+ * - Validates input arguments.
+ * - Converts FUSE/Linux open flags to MOFS open flags.
+ * - Opens the target path through POSIX wrapper and stores handle in `fi->fh`.
+ *
+ * @param[in] path Target file path.
+ * @param[in,out] fi FUSE file info that stores per-open handle.
+ * @return 0 on success.
+ * @return Negative errno value on failure.
+ */
+int mofs_open_fuse(const char *path, struct fuse_file_info *fi)
+{
+    int                mofs_flags = 0;
+    mofs_filehandle_t *handle     = NULL;
+
+    if ((path == NULL) || (fi == NULL)) {
+        return -(mofs_to_os_errno(MOFS_EINVAL));
+    }
+
+    switch (fi->flags & O_ACCMODE) {
+    case O_RDONLY:
+        mofs_flags = MOFS_OFLAG_RDONLY;
+        break;
+    case O_WRONLY:
+        mofs_flags = MOFS_OFLAG_WRONLY;
+        break;
+    case O_RDWR:
+        mofs_flags = MOFS_OFLAG_RDWR;
+        break;
+    default:
+        return -(mofs_to_os_errno(MOFS_EINVAL));
+    }
+
+#ifdef O_DIRECTORY
+    if ((fi->flags & O_DIRECTORY) != 0) {
+        mofs_flags |= MOFS_OFLAG_DIRECTORY;
+    }
+#endif
+#ifdef O_CREAT
+    if ((fi->flags & O_CREAT) != 0) {
+        mofs_flags |= MOFS_OFLAG_CREAT;
+    }
+#endif
+
+    handle = mofs_open(path, mofs_flags, 0);
+    if (handle == NULL) {
+        return -errno;
+    }
+
+    fi->fh = (uint64_t)(uintptr_t)handle;
+    return 0;
+}
+
+/**
+ * @brief Release a file handle stored in FUSE file info.
+ *
+ * Function behavior:
+ * - Retrieves per-open file handle from `fi->fh`.
+ * - Closes the handle using POSIX wrapper.
+ * - Clears `fi->fh` after release.
+ *
+ * @param[in] path Target file path (unused).
+ * @param[in,out] fi FUSE file info that owns the handle.
+ * @return 0 on success.
+ * @return Negative errno value on failure.
+ */
+int mofs_release_fuse(const char *path, struct fuse_file_info *fi)
+{
+    mofs_filehandle_t *handle = NULL;
+
+    (void)path;
+
+    if ((fi == NULL) || (fi->fh == 0)) {
+        return -(mofs_to_os_errno(MOFS_EBADF));
+    }
+
+    handle = (mofs_filehandle_t *)(uintptr_t)(fi->fh);
+    fi->fh = 0;
+
+    if (mofs_close(handle) != 0) {
+        return -errno;
+    }
+
+    return 0;
 }
 
 /**
@@ -197,11 +290,24 @@ out:
  */
 int mofs_read_fuse(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
+    int                ret    = 0;
+    mofs_filehandle_t *handle = NULL;
     (void)path;
-    (void)buf;
-    (void)size;
-    (void)offset;
-    (void)fi;
 
-    return -(mofs_to_os_errno(MOFS_ENOSYS));
+    if ((buf == NULL) || (offset < 0) || (fi == NULL) || (fi->fh == 0)) {
+        return -(mofs_to_os_errno(MOFS_EINVAL));
+    }
+
+    if (size == 0) {
+        return 0;
+    }
+
+    handle              = (mofs_filehandle_t *)(uintptr_t)(fi->fh);
+    handle->file_offset = (unsigned int)offset;
+    ret                 = mofs_read(handle, buf, size);
+    if (ret < 0) {
+        return -errno;
+    }
+
+    return ret;
 }

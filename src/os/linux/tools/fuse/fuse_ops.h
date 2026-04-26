@@ -11,6 +11,8 @@
 void *mofs_init_fuse(struct fuse_conn_info *conn, struct fuse_config *cfg);
 void  mofs_destroy_fuse(void *private_data);
 int   mofs_getattr_fuse(const char *path, struct stat *stbuf, struct fuse_file_info *fi);
+int   mofs_open_fuse(const char *path, struct fuse_file_info *fi);
+int   mofs_release_fuse(const char *path, struct fuse_file_info *fi);
 int   mofs_readdir_fuse(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi,
                         enum fuse_readdir_flags flags);
 int   mofs_read_fuse(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
