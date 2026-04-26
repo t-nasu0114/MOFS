@@ -73,6 +73,7 @@ int read_file_data_block(int inode_num, void *buf, unsigned int start_blk_num, u
 /* external functions */
 int mofs_open_core(const char *path, int flags, mode_t mode, mofs_filehandle_t **handle);
 int mofs_close_core(mofs_filehandle_t **handle);
-int mofs_read_core(mofs_filehandle_t **handle, void *buf, size_t size, off_t *offset, size_t *read_size);
+int mofs_read_core(mofs_filehandle_t **handle, void *buf, size_t size, off_t *offset, size_t *read_size,
+                   bool update_offset);
 
 #endif /* __MOFS_FILE__ */

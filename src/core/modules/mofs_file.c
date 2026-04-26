@@ -357,6 +357,7 @@ int mofs_close_core(mofs_filehandle_t **handle)
  * @param[in] size Maximum bytes to read.
  * @param[in,out] offset Byte offset in file; advanced by read bytes on success.
  * @param[out] read_size Actual number of bytes read.
+ * @param[in] update_offset If true, updates `handle->file_offset` by read bytes.
  * @return 0 on success.
  * @return MOFS_EINVAL if arguments are invalid.
  * @return MOFS_EBADF if handle is not opened with read access.
@@ -364,7 +365,8 @@ int mofs_close_core(mofs_filehandle_t **handle)
  * @return MOFS_EISDIR if target inode is a directory.
  * @return Other non-zero errno values propagated from lower layers.
  */
-int mofs_read_core(mofs_filehandle_t **handle, void *buf, size_t size, off_t *offset, size_t *read_size)
+int mofs_read_core(mofs_filehandle_t **handle, void *buf, size_t size, off_t *offset, size_t *read_size,
+                   bool update_offset)
 {
     int             ret = 0;
     mofs_inode_t    inode;
@@ -432,7 +434,9 @@ int mofs_read_core(mofs_filehandle_t **handle, void *buf, size_t size, off_t *of
             (*read_size) = size;
         }
         mofs_memcpy(buf, (char *)buf_tmp + ((*offset) % MOFS_BLK_SIZE), (*read_size));
-        (*offset) += (*read_size);
+        if (update_offset) {
+            (*handle)->file_offset = (unsigned int)(*offset + (off_t)(*read_size));
+        }
     }
 
 out:

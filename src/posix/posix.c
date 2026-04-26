@@ -92,3 +92,93 @@ mofs_dirent_t *mofs_readdir(mofs_dirhandle_t *handle)
 
     return dirent;
 }
+
+/**
+ * @brief Open a file handle in POSIX layer.
+ *
+ * Function behavior:
+ * - Calls `mofs_open_core()` with specified path and open flags.
+ * - Converts MOFS error code to OS errno on failure.
+ * - Returns an opened file handle on success.
+ *
+ * @param[in] path NULL-terminated file path string.
+ * @param[in] flags Open flags (`MOFS_OFLAG_*`).
+ * @param[in] mode File mode used for create path (currently passed through).
+ * @return Opened file handle pointer on success.
+ * @return NULL on failure (with `errno` updated).
+ */
+mofs_filehandle_t *mofs_open(const char *path, int flags, mode_t mode)
+{
+    int                err    = 0;
+    mofs_filehandle_t *handle = NULL;
+
+    err = mofs_open_core(path, flags, mode, &handle);
+    if (err != 0) {
+        errno  = mofs_to_os_errno(err);
+        handle = NULL;
+    }
+
+    return handle;
+}
+
+/**
+ * @brief Close an opened file handle in POSIX layer.
+ *
+ * Function behavior:
+ * - Calls `mofs_close_core()` to release internal file-handle resources.
+ * - Converts MOFS error code to OS errno on failure.
+ *
+ * @param[in] handle Opened file handle to close.
+ * @return 0 on success.
+ * @return Non-zero on failure (with `errno` updated).
+ */
+int mofs_close(mofs_filehandle_t *handle)
+{
+    int err = 0;
+
+    err = mofs_close_core(&handle);
+    if (err != 0) {
+        errno = mofs_to_os_errno(err);
+    }
+
+    return err;
+}
+
+/**
+ * @brief Read file data in POSIX layer.
+ *
+ * Function behavior:
+ * - Validates handle argument before read dispatch.
+ * - Uses current `handle->file_offset` as read start offset.
+ * - Calls `mofs_read_core()` and requests offset update on success.
+ * - Converts MOFS error code to OS errno on failure.
+ *
+ * @param[in] handle Opened file handle.
+ * @param[out] buf Destination buffer for read data.
+ * @param[in] size Maximum number of bytes to read.
+ * @return Number of bytes read on success.
+ * @return -1 on failure (with `errno` updated).
+ */
+int mofs_read(mofs_filehandle_t *handle, void *buf, size_t size)
+{
+    int    err       = 0;
+    int    ret       = 0;
+    off_t  offset    = 0;
+    size_t read_size = 0;
+
+    if (handle == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    offset = (off_t)handle->file_offset;
+    err    = mofs_read_core(&handle, buf, size, &offset, &read_size, true);
+    if (err != 0) {
+        errno = mofs_to_os_errno(err);
+        ret   = -1;
+    } else {
+        ret = (int)read_size;
+    }
+
+    return ret;
+}
