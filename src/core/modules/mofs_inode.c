@@ -1,4 +1,4 @@
-#include "mofs_core_util.h"
+#include "mofs_block.h"
 #include <mofs_core.h>
 #include <mofs_devio.h>
 #include <mofs_errno.h>

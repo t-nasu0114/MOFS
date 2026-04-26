@@ -1,5 +1,5 @@
-#ifndef __MOFS_CORE_UTIL__
-#define __MOFS_CORE_UTIL__
+#ifndef __MOFS_BLOCK__
+#define __MOFS_BLOCK__
 
 #include <mofs_type.h>
 
@@ -7,6 +7,5 @@ int read_continuous_blocks(int fd, void *buf, unsigned int req_blk_num, unsigned
                            unsigned int *read_blk_num, size_t *fraction);
 int write_continuous_blocks(int fd, void *buf, unsigned int blk_num, unsigned int *written_blk_num, size_t *fraction);
 int write_file_data_block(int inode_num, void *buf, unsigned int start_blk_num, size_t *fraction);
-int find_dir_entry(char *component, int parent_inode_num, int *child_inode_num);
 
-#endif /* __MOFS_CORE_UTIL__ */
+#endif /* __MOFS_BLOCK__ */
