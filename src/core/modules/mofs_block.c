@@ -64,8 +64,11 @@ int read_continuous_blocks(int fd, void *buf, unsigned int req_blk_num, unsigned
 
     /* Seek to start block */
     if (ret == 0) {
-        if ((dev_lseek(fd, start_blk_num * MOFS_BLK_SIZE, MOFS_SEEK_SET) < 0)) {
+        off_t offset = dev_lseek(fd, start_blk_num * MOFS_BLK_SIZE, MOFS_SEEK_SET);
+        if (offset < 0) {
             ret = get_errno();
+        } else if ((offset % MOFS_BLK_SIZE) != 0) {
+            ret = MOFS_EINVAL;
         }
     }
 
@@ -107,7 +110,7 @@ int read_continuous_blocks(int fd, void *buf, unsigned int req_blk_num, unsigned
  * @return Number of bytes written (typically `MOFS_BLK_SIZE` or a short write).
  * @return 0 when `dev_write()` fails with `-1` (details are stored in `*err`).
  */
-static int write_one_block(int fd, void *buf, int *err)
+static int write_one_block(int fd, const void *buf, int *err)
 {
     int ret = dev_write(fd, buf, MOFS_BLK_SIZE);
 
@@ -149,28 +152,35 @@ int write_continuous_blocks(int fd, void *buf, unsigned int blk_num, unsigned in
     }
 
     /* Align check */
-    if ((dev_lseek(fd, 0, MOFS_SEEK_CUR) % MOFS_BLK_SIZE) != 0) {
-        ret = MOFS_EINVAL;
+    if (ret == 0) {
+        off_t offset = dev_lseek(fd, 0, MOFS_SEEK_CUR);
+        if (offset < 0) {
+            ret = get_errno();
+        } else if ((offset % MOFS_BLK_SIZE) != 0) {
+            ret = MOFS_EINVAL;
+        }
     }
 
-    *fraction        = 0U;
-    *written_blk_num = 0U;
-
     if (ret == 0) {
-        for (int i = 0; i < blk_num; i++) {
-            ret = write_one_block(fd, buf, &err);
-            if (ret == 0) {
-                ret = err;
-                break;
-            } else if (ret != MOFS_BLK_SIZE) {
-                *fraction = ret;
-                ret       = 0;
-                break;
-            } else {
-                ret = 0;
+        *fraction        = 0U;
+        *written_blk_num = 0U;
+
+        if (ret == 0) {
+            for (int i = 0; i < blk_num; i++) {
+                ret = write_one_block(fd, buf, &err);
+                if (ret == 0) {
+                    ret = err;
+                    break;
+                } else if (ret != MOFS_BLK_SIZE) {
+                    *fraction = ret;
+                    ret       = 0;
+                    break;
+                } else {
+                    ret = 0;
+                }
+                *written_blk_num = *written_blk_num + 1;
+                buf              = (char *)buf + MOFS_BLK_SIZE;
             }
-            *written_blk_num = *written_blk_num + 1;
-            buf              = (char *)buf + MOFS_BLK_SIZE;
         }
     }
 

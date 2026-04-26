@@ -63,7 +63,7 @@ void dev_close(int fd)
     close(fd);
 }
 
-int dev_lseek(int fd, off_t offset, int whence)
+off_t dev_lseek(int fd, off_t offset, int whence)
 {
     return lseek(fd, offset, whence);
 }

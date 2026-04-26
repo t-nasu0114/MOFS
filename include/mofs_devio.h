@@ -21,7 +21,7 @@ void dev_close(int fd);
 #define MOFS_SEEK_CUR 1
 #define MOFS_SEEK_END 2
 
-int dev_lseek(int fd, off_t offset, int whence);
+off_t dev_lseek(int fd, off_t offset, int whence);
 
 /* Get device size */
 unsigned long long dev_get_size(int fd, int *err);
