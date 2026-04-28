@@ -42,3 +42,7 @@ add_subdirectory(src/posix)
 
 # build tools part
 add_subdirectory(src/os/${PLATFORM}/tools)
+
+# build test
+enable_testing()
+add_subdirectory(test)

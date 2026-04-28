@@ -2,6 +2,7 @@
 
 ## built files
 build/
+build-test/
 
 ## .vscode files
 .vscode/
