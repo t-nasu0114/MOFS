@@ -45,7 +45,6 @@ int read_file_data_block(int inode_num, void *buf, unsigned int start_blk_num, u
 {
     int          ret = 0;
     mofs_inode_t inode_buf;
-    unsigned int abs_blk_num = 0;
 
     if ((inode_num < 0) || (buf == NULL) || (read_blk_num == NULL) || (fraction == NULL)) {
         ret = MOFS_EINVAL;
@@ -59,7 +58,8 @@ int read_file_data_block(int inode_num, void *buf, unsigned int start_blk_num, u
 
     /* if request block number is 0, return 0 */
     if (req_blk_num == 0) {
-        (*fraction) = 0;
+        (*read_blk_num) = 0U;
+        (*fraction)     = 0U;
         return 0;
     }
 
@@ -68,25 +68,142 @@ int read_file_data_block(int inode_num, void *buf, unsigned int start_blk_num, u
         ret = mofs_read_inode(inode_num, &inode_buf);
         if (ret == 0) {
             if (((inode_buf.i_size + MOFS_BLK_SIZE - 1) / MOFS_BLK_SIZE) <= start_blk_num) {
+                /* exceed file size limit */
                 ret = MOFS_EINVAL;
             } else if (start_blk_num + req_blk_num > (inode_buf.i_size + MOFS_BLK_SIZE - 1) / MOFS_BLK_SIZE) {
+                /* trim request block number to fit file size */
                 req_blk_num = (inode_buf.i_size + MOFS_BLK_SIZE - 1) / MOFS_BLK_SIZE - start_blk_num;
             }
         }
     }
 
     if (ret == 0) {
-        (*fraction) = 0;
+        (*fraction)     = 0;
+        (*read_blk_num) = 0U;
 
-        abs_blk_num = inode_buf.i_data_blk[start_blk_num];
-        ret         = read_continuous_blocks(ctx.dev_fd, buf, req_blk_num, abs_blk_num, read_blk_num, fraction);
-        if (ret == 0) {
+        for (unsigned int i = 0; i < req_blk_num; i++) {
+            unsigned int read_one_blk_num = 0U;
+            size_t       read_fraction    = 0U;
+
+            ret = read_continuous_blocks(ctx.dev_fd, buf, 1U, inode_buf.i_data_blk[start_blk_num + i],
+                                         &read_one_blk_num, &read_fraction);
+            if (ret != 0) {
+                break;
+            }
+            if (read_fraction != 0U) {
+                *fraction = read_fraction;
+                break;
+            }
+            if (read_one_blk_num != 1U) {
+                ret = MOFS_EIO;
+                break;
+            }
+
+            *read_blk_num = *read_blk_num + 1U;
+            buf           = (char *)buf + MOFS_BLK_SIZE;
+        }
+
+        if ((ret == 0) && ((*fraction) == 0U)) {
             if (inode_buf.i_size / MOFS_BLK_SIZE < start_blk_num + *read_blk_num) {
                 (*fraction) = inode_buf.i_size % MOFS_BLK_SIZE;
                 (*read_blk_num) -= 1;
-            } else {
-                (*fraction) = 0;
             }
+        }
+    }
+
+    return ret;
+}
+
+/**
+ * @brief Write file data blocks mapped by inode block slots.
+ *
+ * Function behavior:
+ * - Reads inode metadata and validates requested file block range.
+ * - Writes data one block at a time using `i_data_blk[start_blk_num + i]`.
+ * - Reports the number of fully written blocks and short-write remainder.
+ * - Does not allocate data blocks; caller must prepare block mapping.
+ *
+ * @param[in] inode_num Target inode number.
+ * @param[in] buf Source buffer containing file data to write.
+ * @param[in] start_blk_num File-relative start block index.
+ * @param[in] req_blk_num Number of blocks requested to write.
+ * @param[out] written_blk_num Number of full blocks successfully written.
+ * @param[out] fraction Number of bytes written in a short-write case.
+ * @return 0 on success (including short-write case; see `fraction`).
+ * @return MOFS_EINVAL if arguments are invalid.
+ * @return MOFS_ENOSPC if requested range exceeds per-file block limit.
+ * @return MOFS_EIO if unexpected block write result is detected.
+ * @return Non-zero errno value propagated from inode/block operations.
+ */
+int write_file_data_block(int inode_num, const void *buf, unsigned int start_blk_num, unsigned int req_blk_num,
+                          unsigned int *written_blk_num, size_t *fraction)
+{
+    int          ret = 0;
+    mofs_inode_t inode_buf;
+
+    if ((inode_num < 0) || (buf == NULL) || (written_blk_num == NULL) || (fraction == NULL)) {
+        ret = MOFS_EINVAL;
+        return ret;
+    }
+
+    if (start_blk_num >= MOFS_DATA_BLK_PER_FILE) {
+        ret = MOFS_EINVAL;
+        return ret;
+    }
+
+    /* if request block number is 0, return 0 */
+    if (req_blk_num == 0) {
+        (*written_blk_num) = 0U;
+        (*fraction)        = 0U;
+        return 0;
+    }
+
+    /* check file size and block index */
+    if (ret == 0) {
+        ret = mofs_read_inode(inode_num, &inode_buf);
+        if (ret == 0) {
+            if (req_blk_num > MOFS_DATA_BLK_PER_FILE - start_blk_num) {
+                /* trim request block number to fit file size */
+                req_blk_num = MOFS_DATA_BLK_PER_FILE - start_blk_num;
+            }
+        }
+    }
+
+    /* Note : DO NOT allocate data block for file here.
+     * Allocate data block for file in the caller layer.
+     */
+
+    /* write data block to file */
+    if (ret == 0) {
+        (*fraction)        = 0U;
+        (*written_blk_num) = 0U;
+
+        for (unsigned int i = 0; i < req_blk_num; i++) {
+            unsigned int written_one_blk_num = 0U;
+            size_t       written_fraction    = 0U;
+            unsigned int abs_blk_num         = inode_buf.i_data_blk[start_blk_num + i];
+
+            if ((abs_blk_num < ctx.sp_blk.data_region_start) ||
+                (ctx.sp_blk.data_region_start + ctx.sp_blk.data_blk_num <= abs_blk_num)) {
+                ret = MOFS_EINVAL;
+                break;
+            }
+
+            ret = write_continuous_blocks(ctx.dev_fd, buf, 1U, abs_blk_num, &written_one_blk_num, &written_fraction);
+            if (ret != 0) {
+                break;
+            }
+            if (written_fraction != 0U) {
+                *fraction = written_fraction;
+                break;
+            }
+            if (written_one_blk_num != 1U) {
+                ret = MOFS_EIO;
+                break;
+            }
+
+            *written_blk_num = *written_blk_num + 1U;
+            buf              = (char *)buf + MOFS_BLK_SIZE;
         }
     }
 
