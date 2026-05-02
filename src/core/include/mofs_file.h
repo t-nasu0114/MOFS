@@ -69,6 +69,8 @@ extern mofs_filehandle_t filehandle_pool[MOFS_FILEHANDLE_POOL_SIZE];
 /* internal utilities */
 int read_file_data_block(int inode_num, void *buf, unsigned int start_blk_num, unsigned int req_blk_num,
                          unsigned int *read_blk_num, size_t *fraction);
+int write_file_data_block(int inode_num, const void *buf, unsigned int start_blk_num, unsigned int req_blk_num,
+                          unsigned int *written_blk_num, size_t *fraction);
 
 /* external functions */
 int mofs_open_core(const char *path, int flags, mode_t mode, mofs_filehandle_t **handle);

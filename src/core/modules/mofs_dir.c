@@ -1,3 +1,4 @@
+#include "mofs_block.h"
 #include "mofs_core.h"
 #include <mofs_dir.h>
 #include <mofs_errno.h>
@@ -102,6 +103,285 @@ out2:
         mofs_free(buf);
     }
 out1:
+    return ret;
+}
+
+/**
+ * @brief Remove a named directory entry from a parent directory file.
+ *
+ * Function behavior:
+ * - Reads parent inode and validates directory type.
+ * - Scans directory data blocks to find an entry matching `component`.
+ * - Marks matched entry as tombstone (`inode_num = 0`, empty name).
+ * - Writes back the modified block without shrinking `i_size`.
+ *
+ * @param[in] component Directory entry name to remove.
+ * @param[in] parent_inode_num Parent directory inode number.
+ * @return 0 on success.
+ * @return MOFS_EINVAL if arguments are invalid.
+ * @return MOFS_ENOTDIR if parent inode is not a directory.
+ * @return MOFS_ENOENT if target entry is not found.
+ * @return MOFS_EIO if short read/write is detected.
+ * @return Non-zero errno value propagated from inode/data I/O helpers.
+ */
+int remove_dir_entry(const char *component, int parent_inode_num)
+{
+    int          ret            = 0;
+    int          parent_blk_num = 0;
+    bool         found          = false;
+    void        *buf            = NULL;
+    size_t       fraction       = 0U;
+    mofs_inode_t parent_inode;
+    unsigned int read_blk_num    = 0U;
+    unsigned int written_blk_num = 0U;
+
+    if ((component == NULL) || (component[0] == '\0') || (parent_inode_num < 0)) {
+        return MOFS_EINVAL;
+    }
+
+    buf = mofs_malloc(MOFS_BLK_SIZE);
+    if (buf == NULL) {
+        return get_errno();
+    }
+
+    ret = mofs_read_inode(parent_inode_num, &parent_inode);
+    if (ret != 0) {
+        goto out;
+    }
+    if ((parent_inode.i_mode & MOFS_FTYPE_DIR) == 0U) {
+        ret = MOFS_ENOTDIR;
+        goto out;
+    }
+
+    /* Scan parent directory blocks and tombstone the first matched entry. */
+    parent_blk_num = (parent_inode.i_size + MOFS_BLK_SIZE - 1U) / MOFS_BLK_SIZE;
+    for (int blk_idx = 0; blk_idx < parent_blk_num; blk_idx++) {
+        unsigned int dirent_num = 0U;
+
+        /* Read one directory block. */
+        ret = read_file_data_block(parent_inode_num, buf, (unsigned int)blk_idx, 1U, &read_blk_num, &fraction);
+        if (ret != 0) {
+            break;
+        }
+        if (!(((read_blk_num == 1U) && (fraction == 0U)) || ((read_blk_num == 0U) && (fraction != 0U)))) {
+            ret = MOFS_EIO;
+            break;
+        }
+
+        if (fraction != 0U) {
+            dirent_num = (unsigned int)(fraction / sizeof(mofs_dirent_t));
+        } else {
+            dirent_num = MOFS_BLK_SIZE / sizeof(mofs_dirent_t);
+        }
+        /* Find target name and clear the slot as tombstone. */
+        for (unsigned int dir_idx = 0U; dir_idx < dirent_num; dir_idx++) {
+            mofs_dirent_t *dirent = &((mofs_dirent_t *)buf)[dir_idx];
+            if ((dirent->inode_num != 0U) && (mofs_strcmp(dirent->name, component) == 0)) {
+                mofs_memset(dirent, 0, sizeof(mofs_dirent_t));
+                found = true;
+                break;
+            }
+        }
+
+        if (found == true) {
+            /* Persist the modified block; directory i_size is unchanged. */
+            ret = write_file_data_block(parent_inode_num, buf, (unsigned int)blk_idx, 1U, &written_blk_num, &fraction);
+            if (ret != 0) {
+                break;
+            }
+            if ((written_blk_num != 1U) || (fraction != 0U)) {
+                ret = MOFS_EIO;
+            }
+            break;
+        }
+    }
+
+    if ((ret == 0) && (found == false)) {
+        ret = MOFS_ENOENT;
+    }
+
+out:
+    if (buf != NULL) {
+        mofs_free(buf);
+    }
+    return ret;
+}
+
+/**
+ * @brief Add a directory entry to a parent directory file.
+ *
+ * Function behavior:
+ * - Validates parent directory and requested entry parameters.
+ * - Reuses a tombstone slot when available.
+ * - Appends a new slot at EOF when no reusable slot exists.
+ * - Extends directory data blocks and `i_size` when append needs more space.
+ *
+ * @param[in] component Directory entry name to add.
+ * @param[in] parent_inode_num Parent directory inode number.
+ * @param[in] child_inode_num Child inode number to store.
+ * @return 0 on success.
+ * @return MOFS_EINVAL if arguments are invalid.
+ * @return MOFS_ENOTDIR if parent inode is not a directory.
+ * @return MOFS_EEXIST if the same valid entry already exists.
+ * @return MOFS_EFBIG if directory slot capacity is exceeded.
+ * @return MOFS_EIO if short read/write is detected.
+ * @return Non-zero errno value propagated from inode/data/block helpers.
+ */
+int add_dir_entry(const char *component, int parent_inode_num, int child_inode_num)
+{
+    int            ret              = 0;
+    mofs_inode_t   parent_inode;
+    mofs_dirent_t *dirent_buf       = NULL;
+    unsigned int   read_blk_num     = 0U;
+    unsigned int   written_blk_num  = 0U;
+    size_t         fraction         = 0U;
+    size_t         name_len         = 0U;
+    bool           found_reusable   = false;
+    bool           allocated_newblk = false;
+    unsigned int   reusable_idx     = 0U;
+    unsigned int   entries_per_blk  = MOFS_BLK_SIZE / sizeof(mofs_dirent_t);
+    unsigned int   append_entry_idx = 0U;
+    unsigned int   target_entry_idx = 0U;
+    unsigned int   target_blk_idx   = 0U;
+    unsigned int   target_in_blk    = 0U;
+    unsigned int   old_blk_num      = 0U;
+    unsigned int   max_entry_num    = MOFS_DATA_BLK_PER_FILE * (MOFS_BLK_SIZE / sizeof(mofs_dirent_t));
+
+    if ((component == NULL) || (component[0] == '\0') || (parent_inode_num < 0) || (child_inode_num <= 0) ||
+        (ctx.sp_blk.inode_num <= (unsigned int)child_inode_num)) {
+        return MOFS_EINVAL;
+    }
+    name_len = mofs_strlen(component);
+    if ((name_len == 0U) || (name_len >= MOFS_FILENAME_LEN)) {
+        return MOFS_EINVAL;
+    }
+
+    dirent_buf = (mofs_dirent_t *)mofs_malloc(MOFS_BLK_SIZE);
+    if (dirent_buf == NULL) {
+        return get_errno();
+    }
+
+    ret = mofs_read_inode(parent_inode_num, &parent_inode);
+    if (ret != 0) {
+        goto out;
+    }
+    if ((parent_inode.i_mode & MOFS_FTYPE_DIR) == 0U) {
+        ret = MOFS_ENOTDIR;
+        goto out;
+    }
+
+    if ((parent_inode.i_size % sizeof(mofs_dirent_t)) != 0U) {
+        ret = MOFS_EIO;
+        goto out;
+    }
+
+    old_blk_num      = (parent_inode.i_size + MOFS_BLK_SIZE - 1U) / MOFS_BLK_SIZE;
+    append_entry_idx = parent_inode.i_size / sizeof(mofs_dirent_t);
+    if (append_entry_idx >= max_entry_num) {
+        ret = MOFS_EFBIG;
+        goto out;
+    }
+
+    /* First pass: detect duplicate name and remember first reusable tombstone. */
+    for (unsigned int blk_idx = 0U; blk_idx < old_blk_num; blk_idx++) {
+        unsigned int dirent_num = 0U;
+        ret = read_file_data_block(parent_inode_num, dirent_buf, blk_idx, 1U, &read_blk_num, &fraction);
+        if (ret != 0) {
+            goto out;
+        }
+        if (!(((read_blk_num == 1U) && (fraction == 0U)) || ((read_blk_num == 0U) && (fraction != 0U)))) {
+            ret = MOFS_EIO;
+            goto out;
+        }
+
+        if (fraction != 0U) {
+            dirent_num = (unsigned int)(fraction / sizeof(mofs_dirent_t));
+        } else {
+            dirent_num = entries_per_blk;
+        }
+
+        for (unsigned int dir_idx = 0U; dir_idx < dirent_num; dir_idx++) {
+            if ((dirent_buf[dir_idx].inode_num != 0U) && (dirent_buf[dir_idx].name[0] != '\0') &&
+                (mofs_strcmp(dirent_buf[dir_idx].name, component) == 0)) {
+                ret = MOFS_EEXIST;
+                goto out;
+            }
+            if ((!found_reusable) &&
+                ((dirent_buf[dir_idx].inode_num == 0U) || (dirent_buf[dir_idx].name[0] == '\0'))) {
+                found_reusable = true;
+                reusable_idx   = blk_idx * entries_per_blk + dir_idx;
+            }
+        }
+    }
+
+    if (found_reusable) {
+        target_entry_idx = reusable_idx;
+    } else {
+        target_entry_idx = append_entry_idx;
+    }
+    target_blk_idx = target_entry_idx / entries_per_blk;
+    target_in_blk  = target_entry_idx % entries_per_blk;
+
+    /* No tombstone slot: append at EOF, expanding by one data block if needed. */
+    if (target_blk_idx >= old_blk_num) {
+        if (old_blk_num >= MOFS_DATA_BLK_PER_FILE) {
+            ret = MOFS_EFBIG;
+            goto out;
+        }
+        ret = allocate_data_block(parent_inode_num, 1U);
+        if (ret != 0) {
+            goto out;
+        }
+        allocated_newblk = true;
+        mofs_memset(dirent_buf, 0, MOFS_BLK_SIZE);
+    } else {
+        /* Reuse existing block that contains the chosen target slot. */
+        ret = read_file_data_block(parent_inode_num, dirent_buf, target_blk_idx, 1U, &read_blk_num, &fraction);
+        if (ret != 0) {
+            goto rollback_alloc;
+        }
+        if (!(((read_blk_num == 1U) && (fraction == 0U)) || ((read_blk_num == 0U) && (fraction != 0U)))) {
+            ret = MOFS_EIO;
+            goto rollback_alloc;
+        }
+    }
+
+    /* Write entry payload to selected slot. */
+    mofs_memset(&dirent_buf[target_in_blk], 0, sizeof(mofs_dirent_t));
+    mofs_strcpy(dirent_buf[target_in_blk].name, component);
+    dirent_buf[target_in_blk].inode_num = (uint32_t)child_inode_num;
+
+    ret = write_file_data_block(parent_inode_num, dirent_buf, target_blk_idx, 1U, &written_blk_num, &fraction);
+    if (ret != 0) {
+        goto rollback_alloc;
+    }
+    if (!((written_blk_num == 1U) && (fraction == 0U))) {
+        ret = MOFS_EIO;
+        goto rollback_alloc;
+    }
+
+    if (!found_reusable) {
+        /* Only true append consumes logical size; tombstone reuse keeps size. */
+        parent_inode.i_size += sizeof(mofs_dirent_t);
+        ret = mofs_write_inode(parent_inode_num, &parent_inode);
+        if (ret != 0) {
+            goto rollback_alloc;
+        }
+    }
+
+    ret = 0;
+    goto out;
+
+rollback_alloc:
+    if (allocated_newblk) {
+        /* Best-effort rollback for newly reserved block on append path failure. */
+        (void)free_data_block(parent_inode_num, target_blk_idx, 1U);
+    }
+
+out:
+    if (dirent_buf != NULL) {
+        mofs_free(dirent_buf);
+    }
     return ret;
 }
 
