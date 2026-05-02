@@ -182,3 +182,42 @@ int mofs_read(mofs_filehandle_t *handle, void *buf, size_t size)
 
     return ret;
 }
+
+/**
+ * @brief Write file data in POSIX layer.
+ *
+ * Function behavior:
+ * - Validates handle argument before write dispatch.
+ * - Uses current `handle->file_offset` as write start offset.
+ * - Calls `mofs_write_core()` and requests offset update on success.
+ * - Converts MOFS error code to OS errno on failure.
+ *
+ * @param[in] handle Opened file handle.
+ * @param[in] buf Source buffer containing bytes to write.
+ * @param[in] size Number of bytes requested to write.
+ * @return Number of bytes written on success.
+ * @return -1 on failure (with `errno` updated).
+ */
+int mofs_write(mofs_filehandle_t *handle, const void *buf, size_t size)
+{
+    int    err          = 0;
+    int    ret          = 0;
+    off_t  offset       = 0;
+    size_t written_size = 0;
+
+    if (handle == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    offset = (off_t)handle->file_offset;
+    err    = mofs_write_core(&handle, buf, size, &offset, &written_size, true);
+    if (err != 0) {
+        errno = mofs_to_os_errno(err);
+        ret   = -1;
+    } else {
+        ret = (int)written_size;
+    }
+
+    return ret;
+}
