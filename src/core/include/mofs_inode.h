@@ -5,6 +5,8 @@
 
 int mofs_read_inode(int inode_num, mofs_inode_t *inode);
 int mofs_write_inode(int inode_num, const mofs_inode_t *inode);
+int allocate_inode(int *inode_num);
+int free_inode(int inode_num);
 int mofs_path_to_inode_num(const char *path, int *inode_num);
 
 #endif /* __MOFS_INODE__ */
