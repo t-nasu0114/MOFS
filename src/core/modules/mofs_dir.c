@@ -5,8 +5,10 @@
 #include <mofs_file.h>
 #include <mofs_inode.h>
 #include <mofs_mem.h>
+#include <mofs_path.h>
 #include <mofs_str.h>
 #include <mofs_type.h>
+#include <mofs_user.h>
 #include <stdint.h>
 
 /* Directory handle pool */
@@ -20,6 +22,142 @@ static int get_free_dirhandle_index(void)
         }
     }
     return -1;
+}
+
+static int check_dir_write_permission(const mofs_user_ctx_t *user, const mofs_inode_t *inode)
+{
+    int          ret       = 0;
+    bool         is_member = false;
+    unsigned int write_bit = 0U;
+
+    if ((user == NULL) || (inode == NULL)) {
+        return MOFS_EINVAL;
+    }
+
+    ret = mofs_is_caller_in_group(inode->i_gid, &is_member);
+    if (ret != 0) {
+        return ret;
+    }
+
+    if (user->uid == inode->i_uid) {
+        write_bit = MOFS_S_IWUSR;
+    } else if (is_member) {
+        write_bit = MOFS_S_IWGRP;
+    } else {
+        write_bit = MOFS_S_IWOTH;
+    }
+
+    if ((inode->i_mode & write_bit) == 0U) {
+        return MOFS_EACCES;
+    }
+
+    return 0;
+}
+
+static int write_dot_entries(int child_inode_num, int parent_inode_num)
+{
+    int            ret             = 0;
+    mofs_dirent_t *blk_buf         = NULL;
+    unsigned int   written_blk_num = 0U;
+    size_t         fraction        = 0U;
+
+    blk_buf = (mofs_dirent_t *)mofs_malloc(MOFS_BLK_SIZE);
+    if (blk_buf == NULL) {
+        return get_errno();
+    }
+    mofs_memset(blk_buf, 0, MOFS_BLK_SIZE);
+
+    mofs_strcpy(blk_buf[0].name, ".");
+    blk_buf[0].inode_num = (uint32_t)child_inode_num;
+    mofs_strcpy(blk_buf[1].name, "..");
+    blk_buf[1].inode_num = (uint32_t)parent_inode_num;
+
+    ret = write_file_data_block(child_inode_num, blk_buf, 0U, 1U, &written_blk_num, &fraction);
+    if (ret != 0) {
+        mofs_free(blk_buf);
+        return ret;
+    }
+    if ((written_blk_num != 1U) || (fraction != 0U)) {
+        mofs_free(blk_buf);
+        return MOFS_EIO;
+    }
+
+    mofs_free(blk_buf);
+    return 0;
+}
+
+static bool is_dot_or_dotdot_name(const char *name)
+{
+    if (name == NULL) {
+        return false;
+    }
+
+    return (mofs_strcmp(name, ".") == 0) || (mofs_strcmp(name, "..") == 0);
+}
+
+static int is_directory_empty(int inode_num, bool *is_empty)
+{
+    int            ret          = 0;
+    mofs_inode_t   inode;
+    mofs_dirent_t *buf          = NULL;
+    unsigned int   read_blk_num = 0U;
+    size_t         fraction     = 0U;
+    bool           empty        = true;
+    unsigned int   dir_blk_num  = 0U;
+
+    if ((inode_num < 0) || (is_empty == NULL)) {
+        return MOFS_EINVAL;
+    }
+
+    ret = mofs_read_inode(inode_num, &inode);
+    if (ret != 0) {
+        return ret;
+    }
+    if ((inode.i_mode & MOFS_FTYPE_DIR) == 0U) {
+        return MOFS_ENOTDIR;
+    }
+
+    buf = (mofs_dirent_t *)mofs_malloc(MOFS_BLK_SIZE);
+    if (buf == NULL) {
+        return get_errno();
+    }
+
+    dir_blk_num = (inode.i_size + MOFS_BLK_SIZE - 1U) / MOFS_BLK_SIZE;
+    for (unsigned int blk_idx = 0U; blk_idx < dir_blk_num; blk_idx++) {
+        unsigned int dirent_num = 0U;
+        ret = read_file_data_block(inode_num, buf, blk_idx, 1U, &read_blk_num, &fraction);
+        if (ret != 0) {
+            goto out;
+        }
+        if (!(((read_blk_num == 1U) && (fraction == 0U)) || ((read_blk_num == 0U) && (fraction != 0U)))) {
+            ret = MOFS_EIO;
+            goto out;
+        }
+
+        if (fraction != 0U) {
+            dirent_num = (unsigned int)(fraction / sizeof(mofs_dirent_t));
+        } else {
+            dirent_num = MOFS_BLK_SIZE / sizeof(mofs_dirent_t);
+        }
+
+        for (unsigned int dir_idx = 0U; dir_idx < dirent_num; dir_idx++) {
+            if ((buf[dir_idx].inode_num != 0U) && (buf[dir_idx].name[0] != '\0') &&
+                !is_dot_or_dotdot_name(buf[dir_idx].name)) {
+                empty = false;
+                break;
+            }
+        }
+        if (empty == false) {
+            break;
+        }
+    }
+
+out:
+    mofs_free(buf);
+    if (ret == 0) {
+        *is_empty = empty;
+    }
+    return ret;
 }
 
 /**
@@ -383,6 +521,227 @@ out:
         mofs_free(dirent_buf);
     }
     return ret;
+}
+
+/**
+ * @brief Create a new directory and link it under parent directory.
+ *
+ * Function behavior:
+ * - Resolves parent directory and target leaf component from path.
+ * - Allocates and initializes child directory inode and one data block.
+ * - Writes `.` and `..` entries into the first child directory block.
+ * - Adds parent directory entry and updates parent link count.
+ * - Performs best-effort rollback on failure.
+ *
+ * @param[in] path NULL-terminated absolute directory path.
+ * @param[in] mode Permission bits for the new directory.
+ * @return 0 on success.
+ * @return MOFS_EINVAL if arguments are invalid.
+ * @return MOFS_EEXIST if target path already exists.
+ * @return MOFS_ENOTDIR if parent inode is not a directory.
+ * @return MOFS_EPERM or MOFS_EACCES on permission failure.
+ * @return Non-zero errno value propagated from lower helpers.
+ */
+int mofs_mkdir_core(const char *path, mode_t mode)
+{
+    int              ret                = 0;
+    int              child_inode_num    = -1;
+    bool             inode_allocated    = false;
+    bool             block_allocated    = false;
+    bool             parent_linked      = false;
+    mofs_path_info_t path_info;
+    mofs_user_ctx_t  user;
+    mofs_inode_t     parent_inode;
+    mofs_inode_t     child_inode;
+
+    if ((path == NULL) || (path[0] != '/')) {
+        return MOFS_EINVAL;
+    }
+
+    mofs_memset(&path_info, 0, sizeof(path_info));
+    ret = mofs_resolve_path(path, MOFS_PATH_RESOLVE_PARENT | MOFS_PATH_RESOLVE_INODE | MOFS_PATH_ALLOW_MISSING_LEAF,
+                            &path_info);
+    if (ret != 0) {
+        return ret;
+    }
+    if (path_info.leaf_found) {
+        return MOFS_EEXIST;
+    }
+
+    ret = mofs_get_caller_user(&user);
+    if (ret != 0) {
+        return ret;
+    }
+    if (user.valid == false) {
+        return MOFS_EPERM;
+    }
+
+    ret = mofs_read_inode(path_info.parent_inode_num, &parent_inode);
+    if (ret != 0) {
+        return ret;
+    }
+    if ((parent_inode.i_mode & MOFS_FTYPE_DIR) == 0U) {
+        return MOFS_ENOTDIR;
+    }
+    ret = check_dir_write_permission(&user, &parent_inode);
+    if (ret != 0) {
+        return ret;
+    }
+
+    ret = allocate_inode(&child_inode_num);
+    if (ret != 0) {
+        goto rollback;
+    }
+    inode_allocated = true;
+
+    mofs_memset(&child_inode, 0, sizeof(child_inode));
+    child_inode.i_size  = 0U;
+    child_inode.i_links = 2U;
+    child_inode.i_mode  = (uint16_t)(MOFS_FTYPE_DIR | (mode & 0777U));
+    child_inode.i_uid   = user.uid;
+    child_inode.i_gid   = user.gid;
+    ret = mofs_write_inode(child_inode_num, &child_inode);
+    if (ret != 0) {
+        goto rollback;
+    }
+
+    ret = allocate_data_block(child_inode_num, 1U);
+    if (ret != 0) {
+        goto rollback;
+    }
+    block_allocated = true;
+
+    ret = write_dot_entries(child_inode_num, path_info.parent_inode_num);
+    if (ret != 0) {
+        goto rollback;
+    }
+
+    ret = mofs_read_inode(child_inode_num, &child_inode);
+    if (ret != 0) {
+        goto rollback;
+    }
+    child_inode.i_size = MOFS_BLK_SIZE;
+    ret                = mofs_write_inode(child_inode_num, &child_inode);
+    if (ret != 0) {
+        goto rollback;
+    }
+
+    ret = add_dir_entry(path_info.leaf_name, path_info.parent_inode_num, child_inode_num);
+    if (ret != 0) {
+        goto rollback;
+    }
+    parent_linked = true;
+
+    ret = mofs_read_inode(path_info.parent_inode_num, &parent_inode);
+    if (ret != 0) {
+        goto rollback;
+    }
+    parent_inode.i_links = parent_inode.i_links + 1U;
+    ret                  = mofs_write_inode(path_info.parent_inode_num, &parent_inode);
+    if (ret != 0) {
+        goto rollback;
+    }
+
+    return 0;
+
+rollback:
+    if (parent_linked) {
+        (void)remove_dir_entry(path_info.leaf_name, path_info.parent_inode_num);
+    }
+    if (block_allocated) {
+        (void)free_data_block(child_inode_num, 0U, 1U);
+    }
+    if (inode_allocated) {
+        (void)free_inode(child_inode_num);
+    }
+    return ret;
+}
+
+/**
+ * @brief Remove an empty directory and unlink it from its parent.
+ *
+ * Function behavior:
+ * - Resolves parent and target inodes from `path`.
+ * - Validates that target is an empty directory (`.` and `..` only).
+ * - Removes parent directory entry for target.
+ * - Frees all child data blocks and inode.
+ * - Decrements parent directory link count.
+ *
+ * @param[in] path NULL-terminated absolute directory path.
+ * @return 0 on success.
+ * @return MOFS_EINVAL if arguments are invalid or root/special name is requested.
+ * @return MOFS_ENOTDIR if target inode is not a directory.
+ * @return MOFS_ENOTEMPTY if target directory contains entries except `.` and `..`.
+ * @return Non-zero errno value propagated from lower helpers.
+ */
+int mofs_rmdir_core(const char *path)
+{
+    int              ret          = 0;
+    bool             is_empty     = false;
+    unsigned int     used_blk_num = 0U;
+    mofs_path_info_t path_info;
+    mofs_inode_t     target_inode;
+    mofs_inode_t     parent_inode;
+
+    if ((path == NULL) || (path[0] != '/')) {
+        return MOFS_EINVAL;
+    }
+    if ((path[1] == '\0') || is_dot_or_dotdot_name(path)) {
+        return MOFS_EINVAL;
+    }
+
+    mofs_memset(&path_info, 0, sizeof(path_info));
+    ret = mofs_resolve_path(path, MOFS_PATH_RESOLVE_PARENT | MOFS_PATH_RESOLVE_INODE, &path_info);
+    if (ret != 0) {
+        return ret;
+    }
+    if (is_dot_or_dotdot_name(path_info.leaf_name)) {
+        return MOFS_EINVAL;
+    }
+
+    ret = mofs_read_inode(path_info.leaf_inode_num, &target_inode);
+    if (ret != 0) {
+        return ret;
+    }
+    if ((target_inode.i_mode & MOFS_FTYPE_DIR) == 0U) {
+        return MOFS_ENOTDIR;
+    }
+
+    ret = is_directory_empty(path_info.leaf_inode_num, &is_empty);
+    if (ret != 0) {
+        return ret;
+    }
+    if (!is_empty) {
+        return MOFS_ENOTEMPTY;
+    }
+
+    ret = remove_dir_entry(path_info.leaf_name, path_info.parent_inode_num);
+    if (ret != 0) {
+        return ret;
+    }
+
+    used_blk_num = (target_inode.i_size + MOFS_BLK_SIZE - 1U) / MOFS_BLK_SIZE;
+    if (used_blk_num > 0U) {
+        ret = free_data_block(path_info.leaf_inode_num, 0U, used_blk_num);
+        if (ret != 0) {
+            return ret;
+        }
+    }
+
+    ret = free_inode(path_info.leaf_inode_num);
+    if (ret != 0) {
+        return ret;
+    }
+
+    ret = mofs_read_inode(path_info.parent_inode_num, &parent_inode);
+    if (ret != 0) {
+        return ret;
+    }
+    if (parent_inode.i_links == 0U) {
+        return MOFS_EIO;
+    }
+    parent_inode.i_links = parent_inode.i_links - 1U;
+    return mofs_write_inode(path_info.parent_inode_num, &parent_inode);
 }
 
 /**

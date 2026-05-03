@@ -245,3 +245,52 @@ int mofs_unlink(const char *path)
 
     return 0;
 }
+
+/**
+ * @brief Create a directory path in POSIX layer.
+ *
+ * Function behavior:
+ * - Calls `mofs_mkdir_core()` to create the target directory.
+ * - Converts MOFS error code to OS errno on failure.
+ *
+ * @param[in] path NULL-terminated directory path string.
+ * @param[in] mode Permission bits for directory creation.
+ * @return 0 on success.
+ * @return -1 on failure (with `errno` updated).
+ */
+int mofs_mkdir(const char *path, mode_t mode)
+{
+    int err = 0;
+
+    err = mofs_mkdir_core(path, mode);
+    if (err != 0) {
+        errno = mofs_to_os_errno(err);
+        return -1;
+    }
+
+    return 0;
+}
+
+/**
+ * @brief Remove a directory path in POSIX layer.
+ *
+ * Function behavior:
+ * - Calls `mofs_rmdir_core()` to remove the target directory.
+ * - Converts MOFS error code to OS errno on failure.
+ *
+ * @param[in] path NULL-terminated directory path string.
+ * @return 0 on success.
+ * @return -1 on failure (with `errno` updated).
+ */
+int mofs_rmdir(const char *path)
+{
+    int err = 0;
+
+    err = mofs_rmdir_core(path);
+    if (err != 0) {
+        errno = mofs_to_os_errno(err);
+        return -1;
+    }
+
+    return 0;
+}

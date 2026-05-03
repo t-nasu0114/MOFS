@@ -15,5 +15,7 @@ int                mofs_close(mofs_filehandle_t *handle);
 int                mofs_read(mofs_filehandle_t *handle, void *buf, size_t size);
 int                mofs_write(mofs_filehandle_t *handle, const void *buf, size_t size);
 int                mofs_unlink(const char *path);
+int                mofs_mkdir(const char *path, mode_t mode);
+int                mofs_rmdir(const char *path);
 
 #endif /* __MOFS_POSIX__ */
