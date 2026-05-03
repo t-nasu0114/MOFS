@@ -3,6 +3,18 @@ project(MyProject)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Default to Debug for single-config generators.
+if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
+endif()
+
+set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
+    Debug Release RelWithDebInfo MinSizeRel
+)
+
+# Make Debug builds easy to inspect with gdb.
+string(APPEND CMAKE_C_FLAGS_DEBUG " -O0 -g3")
+
 if(ZEPHYR_BASE)
     set(PLATFORM "zephyr")
 else()
