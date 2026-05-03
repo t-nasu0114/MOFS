@@ -427,7 +427,7 @@ int mofs_rmdir_fuse(const char *path)
  *
  * Function behavior:
  * - Supports root directory listing (`/` and `/.`).
- * - Adds `.` and `..` entries via FUSE filler callback.
+ * - Adds `.` and `..` via FUSE filler (mkdir also stores them on disk; skip duplicates).
  *
  * @param[in] path Target directory path.
  * @param[out] buf FUSE directory buffer passed to filler callback.
@@ -490,6 +490,11 @@ int mofs_readdir_fuse(const char *path, void *buf, fuse_fill_dir_t filler, off_t
         }
 
         if (offset > cursor) {
+            cursor++;
+            continue;
+        }
+
+        if ((strcmp(dirent->name, ".") == 0) || (strcmp(dirent->name, "..") == 0)) {
             cursor++;
             continue;
         }
