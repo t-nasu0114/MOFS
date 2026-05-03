@@ -9,11 +9,23 @@
 #include <mofs_core.h>
 #include <mofs_errno.h>
 #include <mofs_inode.h>
+#include <mofs_path.h>
 #include <mofs_posix.h>
+#include <mofs_user.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+
+static void mofs_fuse_bind_request_caller(void)
+{
+    struct fuse_context *ctx = fuse_get_context();
+
+    if (ctx != NULL) {
+        (void)mofs_set_caller_for_peer_process(ctx->uid, ctx->gid, ctx->pid);
+    }
+}
 
 struct fuse_operations op = {
     .init    = mofs_init_fuse,
@@ -107,6 +119,9 @@ static int build_mofs_open_args(int fuse_flags, mode_t requested_mode, bool forc
  * Function behavior:
  * - Obtains FUSE private context from `fuse_get_context()`.
  * - Initializes MOFS core using the configured device path.
+ * - Updates root inode uid/gid to the effective uid/gid of the `mofs` process
+ *   (`geteuid` / `getegid`), since `fuse_get_context()` is not reliable in `init`.
+ * - Binds MOFS caller credentials for subsequent operations in this thread.
  * - Terminates the process if initialization fails.
  *
  * @param[in] conn FUSE connection information (unused).
@@ -116,23 +131,51 @@ static int build_mofs_open_args(int fuse_flags, mode_t requested_mode, bool forc
  */
 void *mofs_init_fuse(struct fuse_conn_info *conn, struct fuse_config *cfg)
 {
-    int ret = 0;
+    int                  ret      = 0;
+    mofs_inode_t         root_inode;
+    struct fuse_context *context  = NULL;
+    mofs_fuse_ctx_t     *fuse_ctx = NULL;
+
     (void)conn;
-    struct fuse_context *context  = fuse_get_context();
-    mofs_fuse_ctx_t     *fuse_ctx = (mofs_fuse_ctx_t *)context->private_data;
+    (void)cfg;
+
+    context = fuse_get_context();
+    if (context == NULL) {
+        fprintf(stderr, "FUSE context unavailable\n");
+        exit(EXIT_FAILURE);
+    }
+
+    fuse_ctx = (mofs_fuse_ctx_t *)context->private_data;
 
     ret = mofs_init_core(fuse_ctx->devfile_path);
     if (ret != 0) {
         fprintf(stderr, "Failed to initialize MOFS core: %d\n", ret);
         exit(EXIT_FAILURE);
     }
-    return (void *)(context->private_data);
+
+    ret = mofs_read_inode(MOFS_ROOT_INODE_NUM, &root_inode);
+    if (ret != 0) {
+        fprintf(stderr, "Failed to read root inode: %d\n", ret);
+        exit(EXIT_FAILURE);
+    }
+    root_inode.i_uid = (uint32_t)geteuid();
+    root_inode.i_gid = (uint32_t)getegid();
+    ret              = mofs_write_inode(MOFS_ROOT_INODE_NUM, &root_inode);
+    if (ret != 0) {
+        fprintf(stderr, "Failed to update root inode owner: %d\n", ret);
+        exit(EXIT_FAILURE);
+    }
+
+    (void)mofs_set_caller_for_peer_process(geteuid(), getegid(), getpid());
+
+    return (void *)(fuse_ctx);
 }
 
 /**
  * @brief Finalize MOFS core during FUSE shutdown.
  *
  * Function behavior:
+ * - Clears per-thread caller credentials used for permission checks.
  * - Calls `mofs_fini_core()` to release MOFS resources.
  *
  * @param[in] private_data FUSE private data pointer (unused).
@@ -142,6 +185,7 @@ void *mofs_init_fuse(struct fuse_conn_info *conn, struct fuse_config *cfg)
 void mofs_destroy_fuse(void *private_data)
 {
     (void)private_data;
+    (void)mofs_clear_caller_user();
     mofs_fini_core();
 }
 
@@ -161,9 +205,11 @@ void mofs_destroy_fuse(void *private_data)
  */
 int mofs_getattr_fuse(const char *path, struct stat *stbuf, struct fuse_file_info *fi)
 {
-    (void)fi;
     int         ret = 0;
     mofs_stat_t stat;
+
+    (void)fi;
+    mofs_fuse_bind_request_caller();
     memset(stbuf, 0, sizeof(struct stat));
 
     ret = mofs_stat_core(path, &stat);
@@ -197,6 +243,8 @@ int mofs_open_fuse(const char *path, struct fuse_file_info *fi)
     int                mofs_flags = 0;
     mode_t             mode       = 0;
     mofs_filehandle_t *handle     = NULL;
+
+    mofs_fuse_bind_request_caller();
 
     if ((path == NULL) || (fi == NULL)) {
         return -(mofs_to_os_errno(MOFS_EINVAL));
@@ -236,6 +284,8 @@ int mofs_create_fuse(const char *path, mode_t mode, struct fuse_file_info *fi)
     mode_t             mofs_mode  = 0;
     mofs_filehandle_t *handle     = NULL;
 
+    mofs_fuse_bind_request_caller();
+
     if ((path == NULL) || (fi == NULL)) {
         return -(mofs_to_os_errno(MOFS_EINVAL));
     }
@@ -273,6 +323,8 @@ int mofs_release_fuse(const char *path, struct fuse_file_info *fi)
 
     (void)path;
 
+    mofs_fuse_bind_request_caller();
+
     if ((fi == NULL) || (fi->fh == 0)) {
         return -(mofs_to_os_errno(MOFS_EBADF));
     }
@@ -300,6 +352,8 @@ int mofs_release_fuse(const char *path, struct fuse_file_info *fi)
  */
 int mofs_unlink_fuse(const char *path)
 {
+    mofs_fuse_bind_request_caller();
+
     if (path == NULL) {
         return -(mofs_to_os_errno(MOFS_EINVAL));
     }
@@ -326,6 +380,8 @@ int mofs_mkdir_fuse(const char *path, mode_t mode)
 {
     mode_t               masked_mode = mode;
     struct fuse_context *context     = NULL;
+
+    mofs_fuse_bind_request_caller();
 
     if (path == NULL) {
         return -(mofs_to_os_errno(MOFS_EINVAL));
@@ -355,6 +411,8 @@ int mofs_mkdir_fuse(const char *path, mode_t mode)
  */
 int mofs_rmdir_fuse(const char *path)
 {
+    mofs_fuse_bind_request_caller();
+
     if (path == NULL) {
         return -(mofs_to_os_errno(MOFS_EINVAL));
     }
@@ -390,6 +448,8 @@ int mofs_readdir_fuse(const char *path, void *buf, fuse_fill_dir_t filler, off_t
 
     (void)flags;
     (void)fi;
+
+    mofs_fuse_bind_request_caller();
 
     if ((path == NULL) || (buf == NULL) || (filler == NULL) || (offset < 0)) {
         return -(mofs_to_os_errno(MOFS_EINVAL));
@@ -466,7 +526,10 @@ int mofs_read_fuse(const char *path, char *buf, size_t size, off_t offset, struc
 {
     int                ret    = 0;
     mofs_filehandle_t *handle = NULL;
+
     (void)path;
+
+    mofs_fuse_bind_request_caller();
 
     if ((buf == NULL) || (offset < 0) || ((uint64_t)offset > (uint64_t)UINT32_MAX) || (fi == NULL) || (fi->fh == 0)) {
         return -(mofs_to_os_errno(MOFS_EINVAL));
@@ -505,7 +568,10 @@ int mofs_write_fuse(const char *path, const char *buf, size_t size, off_t offset
 {
     int                ret    = 0;
     mofs_filehandle_t *handle = NULL;
+
     (void)path;
+
+    mofs_fuse_bind_request_caller();
 
     if ((buf == NULL) || (offset < 0) || ((uint64_t)offset > (uint64_t)UINT32_MAX) || (fi == NULL) || (fi->fh == 0)) {
         return -(mofs_to_os_errno(MOFS_EINVAL));

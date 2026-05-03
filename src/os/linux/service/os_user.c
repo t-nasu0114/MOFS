@@ -1,6 +1,10 @@
+#define _GNU_SOURCE
 #include <mofs_errno.h>
 #include <mofs_mem.h>
 #include <mofs_user.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 static __thread mofs_user_ctx_t caller_user_ctx = {
@@ -59,6 +63,76 @@ int mofs_set_caller_user(uid_t uid, gid_t gid, pid_t pid)
     caller_user_ctx.supp_group_count = 1;
     caller_user_ctx.valid = true;
 
+    return 0;
+}
+
+#if defined(__linux__)
+static int parse_proc_status_groups(pid_t pid, gid_t *out, size_t max_out, size_t *out_count)
+{
+    char    path[64];
+    FILE   *fp    = NULL;
+    char   *line  = NULL;
+    size_t cap    = 0;
+    ssize_t nread;
+
+    if ((pid <= 0) || (out == NULL) || (out_count == NULL)) {
+        return MOFS_EINVAL;
+    }
+
+    *out_count = 0;
+    (void)snprintf(path, sizeof(path), "/proc/%d/status", (int)pid);
+    fp = fopen(path, "re");
+    if (fp == NULL) {
+        return get_errno();
+    }
+
+    while ((nread = getline(&line, &cap, fp)) != -1) {
+        char *p = NULL;
+        char *saveptr = NULL;
+        char *tok = NULL;
+
+        if (strncmp(line, "Groups:", 7) != 0) {
+            continue;
+        }
+        p = line + 7;
+        while ((*p == ' ') || (*p == '\t')) {
+            p++;
+        }
+        if ((*p == '\n') || (*p == '\0')) {
+            break;
+        }
+        for (tok = strtok_r(p, " \t\n", &saveptr); tok != NULL; tok = strtok_r(NULL, " \t\n", &saveptr)) {
+            unsigned long v = strtoul(tok, NULL, 10);
+            if (*out_count < max_out) {
+                out[*out_count] = (gid_t)v;
+                (*out_count)++;
+            }
+        }
+        break;
+    }
+
+    free(line);
+    (void)fclose(fp);
+    return 0;
+}
+#endif /* defined(__linux__) */
+
+int mofs_set_caller_for_peer_process(uid_t uid, gid_t gid, pid_t pid)
+{
+    int   ret;
+    gid_t groups[MOFS_SUPP_GROUP_MAX];
+    size_t n = 0;
+
+    ret = mofs_set_caller_user(uid, gid, pid);
+    if (ret != 0) {
+        return ret;
+    }
+#if defined(__linux__)
+    ret = parse_proc_status_groups(pid, groups, MOFS_SUPP_GROUP_MAX, &n);
+    if ((ret == 0) && (n > 0U)) {
+        (void)mofs_set_caller_supp_groups(groups, n);
+    }
+#endif
     return 0;
 }
 

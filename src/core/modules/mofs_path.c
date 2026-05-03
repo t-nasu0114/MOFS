@@ -25,7 +25,7 @@
 int mofs_resolve_path(const char *path, unsigned int resolve_flags, mofs_path_info_t *path_info)
 {
     int   ret          = 0;
-    int   parent_inode = 2;
+    int   parent_inode = MOFS_ROOT_INODE_NUM;
     int   child_inode  = -1;
     char *path_copy    = NULL;
     char *current      = NULL;
@@ -57,7 +57,7 @@ int mofs_resolve_path(const char *path, unsigned int resolve_flags, mofs_path_in
         if (require_parent) {
             return MOFS_EINVAL;
         }
-        path_info->leaf_inode_num = 2;
+        path_info->leaf_inode_num = MOFS_ROOT_INODE_NUM;
         path_info->leaf_found     = 1;
         return 0;
     }
