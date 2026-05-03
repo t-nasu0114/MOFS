@@ -7,6 +7,7 @@
 #include <mofs_type.h>
 #include <mofs_user.h>
 
+/* TC-P2-009: set/get caller user preserves uid/gid/pid values. */
 static void test_TC_P2_009_set_and_get_caller_user(void **state)
 {
     mofs_user_ctx_t user;
@@ -24,6 +25,7 @@ static void test_TC_P2_009_set_and_get_caller_user(void **state)
     assert_true(user.valid);
 }
 
+/* TC-P2-010: setting supplementary groups with NULL pointer fails with EINVAL. */
 static void test_TC_P2_010_set_supp_groups_with_null_group_ptr(void **state)
 {
     int ret = 0;
@@ -33,6 +35,7 @@ static void test_TC_P2_010_set_supp_groups_with_null_group_ptr(void **state)
     assert_int_equal(ret, MOFS_EINVAL);
 }
 
+/* TC-P2-011: caller is recognized as member of its primary group. */
 static void test_TC_P2_011_is_caller_in_group_primary_group(void **state)
 {
     bool is_member = false;
@@ -47,6 +50,7 @@ static void test_TC_P2_011_is_caller_in_group_primary_group(void **state)
     assert_true(is_member);
 }
 
+/* TC-P2-012: non-member group query returns false with success status. */
 static void test_TC_P2_012_is_caller_in_group_not_member(void **state)
 {
     bool is_member = true;

@@ -5,6 +5,7 @@
 #include <cmocka.h>
 #include <mofs_posix.h>
 
+/* TC-P1-008: fstat stub currently returns success unconditionally. */
 static void test_TC_P1_008_fstat_stub_returns_zero(void **state)
 {
     int         ret   = 0;

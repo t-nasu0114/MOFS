@@ -3,6 +3,7 @@ mofs_add_cmocka_test(test_core_lifecycle
     SOURCES test_core_lifecycle.c
     LINK_LIBS
         ${CORE_LIB_NAME}
+        ${CORE_FORMAT_LIB_NAME}
         ${OS_SERVICE_LIB_NAME}
         mofs_test_fixture
 )

@@ -4,6 +4,7 @@ mofs_add_cmocka_test(test_posix_file_ops
     LINK_LIBS
         ${POSIX_API_LAYER_LIB_NAME}
         ${CORE_LIB_NAME}
+        ${CORE_FORMAT_LIB_NAME}
         ${OS_SERVICE_LIB_NAME}
         mofs_test_fixture
 )
@@ -14,6 +15,7 @@ mofs_add_cmocka_test(test_posix_dir_ops
     LINK_LIBS
         ${POSIX_API_LAYER_LIB_NAME}
         ${CORE_LIB_NAME}
+        ${CORE_FORMAT_LIB_NAME}
         ${OS_SERVICE_LIB_NAME}
         mofs_test_fixture
 )

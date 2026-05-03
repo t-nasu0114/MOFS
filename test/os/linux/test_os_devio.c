@@ -6,6 +6,7 @@
 #include <mofs_devio.h>
 #include <mofs_errno.h>
 #include <mofs_type.h>
+#include <errno.h>
 
 #include "../../fixtures/test_fixture.h"
 
@@ -33,6 +34,7 @@ static int teardown_temp_image(void **state)
     return 0;
 }
 
+/* TC-P2-001: dev_open succeeds with RDONLY on existing file. */
 static void test_TC_P2_001_dev_open_rdonly_success(void **state)
 {
     const char *image_path = (const char *)*state;
@@ -46,12 +48,17 @@ static void test_TC_P2_001_dev_open_rdonly_success(void **state)
     }
 }
 
+/* TC-P2-002: dev_open with NONE flag returns EINVAL in current implementation. */
 static void test_TC_P2_002_dev_open_invalid_flag(void **state)
 {
-    (void)state;
-    skip();
+    const char *image_path = (const char *)*state;
+    int         fd         = -1;
+
+    fd = dev_open(image_path, MOFS_IO_OPEN_FLAG_NONE);
+    assert_int_equal(fd, EINVAL);
 }
 
+/* TC-P2-003: dev_get_size returns regular file byte size. */
 static void test_TC_P2_003_dev_get_size_regular_file(void **state)
 {
     const char         *image_path = (const char *)*state;
@@ -69,6 +76,7 @@ static void test_TC_P2_003_dev_get_size_regular_file(void **state)
     dev_close(fd);
 }
 
+/* TC-P2-004: dev_get_size on invalid fd returns zero and sets err. */
 static void test_TC_P2_004_dev_get_size_invalid_fd(void **state)
 {
     int                err   = 0;
