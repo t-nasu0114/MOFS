@@ -1,10 +1,12 @@
 #include "mofs_block.h"
 #include <mofs_core.h>
 #include <mofs_devio.h>
+#include <mofs_dir.h>
 #include <mofs_errno.h>
 #include <mofs_file.h>
 #include <mofs_inode.h>
 #include <mofs_mem.h>
+#include <mofs_path.h>
 #include <mofs_type.h>
 #include <mofs_user.h>
 
@@ -207,6 +209,62 @@ int write_file_data_block(int inode_num, const void *buf, unsigned int start_blk
         }
     }
 
+    return ret;
+}
+
+/**
+ * @brief Unlink a regular file from a directory path.
+ *
+ * Function behavior:
+ * - Resolves parent directory inode and target entry name from `path`.
+ * - Resolves target inode and rejects directory targets.
+ * - Removes directory entry first (no recovery after this point).
+ * - Frees file data blocks and inode bitmap entry.
+ *
+ * @param[in] path NULL-terminated absolute path string.
+ * @return 0 on success.
+ * @return MOFS_EINVAL if path is invalid or root path is specified.
+ * @return MOFS_ENOENT if path target does not exist.
+ * @return MOFS_EISDIR if target is a directory.
+ * @return Non-zero errno value propagated from lower helpers.
+ */
+int mofs_unlink_core(const char *path)
+{
+    int              ret             = 0;
+    int              target_inode_num = -1;
+    unsigned int     used_blk_num    = 0U;
+    mofs_inode_t     target_inode;
+    mofs_path_info_t path_info;
+
+    mofs_memset(&path_info, 0, sizeof(path_info));
+    ret = mofs_resolve_path(path, MOFS_PATH_RESOLVE_PARENT | MOFS_PATH_RESOLVE_INODE, &path_info);
+    if (ret != 0) {
+        return ret;
+    }
+    target_inode_num = path_info.leaf_inode_num;
+
+    ret = mofs_read_inode(target_inode_num, &target_inode);
+    if (ret != 0) {
+        return ret;
+    }
+    if ((target_inode.i_mode & MOFS_FTYPE_DIR) != 0U) {
+        return MOFS_EISDIR;
+    }
+
+    ret = remove_dir_entry(path_info.leaf_name, path_info.parent_inode_num);
+    if (ret != 0) {
+        return ret;
+    }
+
+    used_blk_num = (target_inode.i_size + MOFS_BLK_SIZE - 1U) / MOFS_BLK_SIZE;
+    if (used_blk_num > 0U) {
+        ret = free_data_block(target_inode_num, 0U, used_blk_num);
+        if (ret != 0) {
+            return ret;
+        }
+    }
+
+    ret = free_inode(target_inode_num);
     return ret;
 }
 

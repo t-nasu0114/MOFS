@@ -5,6 +5,118 @@
 #include <mofs_str.h>
 
 /**
+ * @brief Resolve a path with configurable output details.
+ *
+ * Function behavior:
+ * - Validates input path and requested resolve flags.
+ * - Walks path components from root inode to the leaf parent.
+ * - Optionally resolves the leaf inode and/or parent inode.
+ * - Optionally tolerates missing leaf component.
+ *
+ * @param[in] path NULL-terminated absolute path string.
+ * @param[in] resolve_flags Combination of `MOFS_PATH_*` flags.
+ * @param[out] path_info Resolve result storage.
+ * @return 0 on success.
+ * @return MOFS_EINVAL if arguments or resolve flags are invalid.
+ * @return MOFS_ENAMETOOLONG if leaf component exceeds directory entry limit.
+ * @return MOFS_ENOENT if path resolution fails for existing-required component.
+ * @return Non-zero errno value from memory allocation failures.
+ */
+int mofs_resolve_path(const char *path, unsigned int resolve_flags, mofs_path_info_t *path_info)
+{
+    int   ret          = 0;
+    int   parent_inode = 2;
+    int   child_inode  = -1;
+    char *path_copy    = NULL;
+    char *current      = NULL;
+    char *next         = NULL;
+    bool  require_leaf_inode;
+    bool  require_parent;
+    bool  allow_missing_leaf;
+
+    if ((path == NULL) || (path_info == NULL) || (path[0] != '/')) {
+        return MOFS_EINVAL;
+    }
+
+    require_leaf_inode = ((resolve_flags & MOFS_PATH_RESOLVE_INODE) != 0U);
+    require_parent     = ((resolve_flags & MOFS_PATH_RESOLVE_PARENT) != 0U);
+    allow_missing_leaf = ((resolve_flags & MOFS_PATH_ALLOW_MISSING_LEAF) != 0U);
+    if ((!require_leaf_inode) && (!require_parent)) {
+        return MOFS_EINVAL;
+    }
+    if (allow_missing_leaf && (!require_leaf_inode)) {
+        return MOFS_EINVAL;
+    }
+
+    mofs_memset(path_info, 0, sizeof(mofs_path_info_t));
+    path_info->parent_inode_num = -1;
+    path_info->leaf_inode_num   = -1;
+    path_info->leaf_found       = 0;
+
+    if (mofs_strcmp(path, "/") == 0) {
+        if (require_parent) {
+            return MOFS_EINVAL;
+        }
+        path_info->leaf_inode_num = 2;
+        path_info->leaf_found     = 1;
+        return 0;
+    }
+
+    path_copy = mofs_malloc(mofs_strlen(path) + 1U);
+    if (path_copy == NULL) {
+        return get_errno();
+    }
+    mofs_strcpy(path_copy, path);
+
+    current = mofs_strtok(path_copy, "/");
+    if (current == NULL) {
+        ret = MOFS_EINVAL;
+        goto out;
+    }
+
+    while (current != NULL) {
+        next = mofs_strtok(NULL, "/");
+        if (next == NULL) {
+            if (mofs_strlen(current) >= MOFS_FILENAME_LEN) {
+                ret = MOFS_ENAMETOOLONG;
+                break;
+            }
+            mofs_strcpy(path_info->leaf_name, current);
+            if (require_parent) {
+                path_info->parent_inode_num = parent_inode;
+            }
+
+            if (require_leaf_inode) {
+                ret = find_dir_entry(current, parent_inode, &child_inode);
+                if ((ret == 0) && (child_inode >= 0)) {
+                    path_info->leaf_inode_num = child_inode;
+                    path_info->leaf_found     = 1;
+                } else if (allow_missing_leaf) {
+                    ret = 0;
+                } else {
+                    ret = MOFS_ENOENT;
+                }
+            }
+            break;
+        }
+
+        ret = find_dir_entry(current, parent_inode, &child_inode);
+        if ((ret != 0) || (child_inode < 0)) {
+            ret = MOFS_ENOENT;
+            break;
+        }
+        parent_inode = child_inode;
+        current      = next;
+    }
+
+out:
+    if (path_copy != NULL) {
+        mofs_free(path_copy);
+    }
+    return ret;
+}
+
+/**
  * @brief Resolve a filesystem path to an inode number.
  *
  * Function behavior:
@@ -18,59 +130,51 @@
  */
 int mofs_path_to_inode_num(const char *path, int *inode_num)
 {
-    int   ret              = 0;
-    int   parent_inode_num = 2;
-    int   child_inode_num  = -1;
-    char *path_copy        = NULL;
-    char *component        = NULL;
+    int              ret       = 0;
+    mofs_path_info_t path_info = {0};
 
-    if ((path == NULL) || (inode_num == NULL) || (path[0] != '/')) {
-        /* Note : currently supports only the absolute path */
-        ret = MOFS_EINVAL;
+    if (inode_num == NULL) {
+        return MOFS_EINVAL;
     }
 
+    ret = mofs_resolve_path(path, MOFS_PATH_RESOLVE_INODE, &path_info);
     if (ret == 0) {
-        if (mofs_strcmp(path, "/") == 0) {
-            *inode_num = 2;
-        } else {
-            path_copy = mofs_malloc(mofs_strlen(path) + 1);
-            component = mofs_malloc(mofs_strlen(path) + 1);
-            if ((path_copy == NULL) || (component == NULL)) {
-                ret = get_errno();
-            } else {
-                mofs_strcpy(path_copy, path);
+        *inode_num = path_info.leaf_inode_num;
+    }
+    return ret;
+}
 
-                /* find directory entry */
-                char *top_path = mofs_strtok(path_copy, "/");
-                while (top_path != NULL) {
+/**
+ * @brief Resolve a path into parent directory inode and final component name.
+ *
+ * Function behavior:
+ * - Validates the input path format and output pointers.
+ * - Traverses path components up to the parent directory.
+ * - Copies the last path component into `component`.
+ * - Returns parent directory inode number through `parent_inode_num`.
+ *
+ * @param[in] path NULL-terminated absolute path string.
+ * @param[out] parent_inode_num Parent directory inode number.
+ * @param[out] component Final path component buffer.
+ * @return 0 on success.
+ * @return MOFS_EINVAL if arguments are invalid or path is root-only.
+ * @return MOFS_ENAMETOOLONG if final component exceeds directory entry limit.
+ * @return MOFS_ENOENT if any intermediate component is not found.
+ * @return Non-zero errno value from memory allocation failures.
+ */
+int mofs_path_to_parent_and_component(const char *path, int *parent_inode_num, char *component)
+{
+    int              ret       = 0;
+    mofs_path_info_t path_info = {0};
 
-                    /* fetch top path component */
-                    mofs_strcpy(component, top_path);
-
-                    /* find directory entry in the parent directory */
-                    ret = find_dir_entry(component, parent_inode_num, &child_inode_num);
-                    if ((ret == 0) && (child_inode_num != -1)) {
-                        parent_inode_num = child_inode_num;
-                    } else {
-                        ret = MOFS_ENOENT;
-                        break;
-                    }
-                    top_path = mofs_strtok(NULL, "/");
-                }
-
-                if ((ret == 0) && (child_inode_num != -1) && (top_path == NULL)) {
-                    *inode_num = parent_inode_num;
-                }
-            }
-        }
-
-        if (path_copy != NULL) {
-            mofs_free(path_copy);
-        }
-        if (component != NULL) {
-            mofs_free(component);
-        }
+    if ((parent_inode_num == NULL) || (component == NULL)) {
+        return MOFS_EINVAL;
     }
 
+    ret = mofs_resolve_path(path, MOFS_PATH_RESOLVE_PARENT, &path_info);
+    if (ret == 0) {
+        *parent_inode_num = path_info.parent_inode_num;
+        mofs_strcpy(component, path_info.leaf_name);
+    }
     return ret;
 }

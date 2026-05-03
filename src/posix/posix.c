@@ -221,3 +221,27 @@ int mofs_write(mofs_filehandle_t *handle, const void *buf, size_t size)
 
     return ret;
 }
+
+/**
+ * @brief Unlink a file path in POSIX layer.
+ *
+ * Function behavior:
+ * - Calls `mofs_unlink_core()` to remove the target file.
+ * - Converts MOFS error code to OS errno on failure.
+ *
+ * @param[in] path NULL-terminated file path string.
+ * @return 0 on success.
+ * @return -1 on failure (with `errno` updated).
+ */
+int mofs_unlink(const char *path)
+{
+    int err = 0;
+
+    err = mofs_unlink_core(path);
+    if (err != 0) {
+        errno = mofs_to_os_errno(err);
+        return -1;
+    }
+
+    return 0;
+}
