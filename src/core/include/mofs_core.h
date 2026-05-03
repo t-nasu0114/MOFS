@@ -6,7 +6,6 @@
  * includes
  *******************************************************/
 
-#include <mofs_posix.h>
 #include <mofs_type.h>
 
 /*******************************************************
@@ -29,6 +28,23 @@
 #define true  1U
 #define false 0U
 #endif
+
+/* Access permission flags */
+#define MOFS_S_IRUSR   0000400U
+#define MOFS_S_IWUSR   0000200U
+#define MOFS_S_IXUSR   0000100U
+#define MOFS_S_IRWXUSR (MOFS_S_IRUSR | MOFS_S_IWUSR | MOFS_S_IXUSR)
+#define MOFS_S_IRGRP   0000040U
+#define MOFS_S_IWGRP   0000020U
+#define MOFS_S_IXGRP   0000010U
+#define MOFS_S_IRWXGRP (MOFS_S_IRGRP | MOFS_S_IWGRP | MOFS_S_IXGRP)
+#define MOFS_S_IROTH   0000004U
+#define MOFS_S_IWOTH   0000002U
+#define MOFS_S_IXOTH   0000001U
+#define MOFS_S_IRWXOTH (MOFS_S_IROTH | MOFS_S_IWOTH | MOFS_S_IXOTH)
+#define MOFS_S_ISUID   0004000U
+#define MOFS_S_ISGID   0002000U
+#define MOFS_S_ISVTX   0001000U
 
 /*******************************************************
  * structs
@@ -64,6 +80,19 @@ typedef struct mofs_inode
 
     uint32_t i_data_blk[MOFS_DATA_BLK_PER_FILE]; /* Absolute block number of data blocks */
 } mofs_inode_t;
+
+/* File status */
+typedef struct mofs_stat
+{
+    ino_t   st_ino;
+    mode_t  st_mode;
+    nlink_t st_nlink;
+    uid_t   st_uid;
+    gid_t   st_gid;
+    off_t   st_size;
+    /* Time info is not supported yet */
+    uint32_t st_blocks;
+} mofs_stat_t;
 
 /***************************
  * Context

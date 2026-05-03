@@ -22,7 +22,7 @@
  */
 static int clear_blocks(int fd, uint64_t block_num)
 {
-    int   ret;
+    int   ret = 0;
     char  buf[MOFS_BLK_SIZE];
     off_t offset;
 
@@ -33,12 +33,15 @@ static int clear_blocks(int fd, uint64_t block_num)
     if ((dev_lseek(fd, offset, MOFS_SEEK_CUR) < 0)) {
         MOFS_ERR("Seek error at block %lu", block_num);
         ret = get_errno();
+        return ret;
     }
 
     if (dev_write(fd, buf, MOFS_BLK_SIZE) != MOFS_BLK_SIZE) {
         MOFS_ERR("Write error at block %lu", block_num);
         ret = get_errno();
+        return ret;
     }
+
     return ret;
 }
 

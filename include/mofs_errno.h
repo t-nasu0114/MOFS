@@ -27,6 +27,7 @@
 #define MOFS_ENOSYS       38 /* Function not implemented */
 #define MOFS_ENOTEMPTY    39 /* Directory not empty */
 #define MOFS_ELOOP        40 /* Too many symbolic links encountered */
+#define MOFS_ENOTSUP      95 /* Operation not supported */
 
 int os_to_mofs_errno(int os_errno);
 int mofs_to_os_errno(int mofs_errno);

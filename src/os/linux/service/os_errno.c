@@ -65,6 +65,14 @@ int os_to_mofs_errno(int os_errno)
         return MOFS_ENOTEMPTY;
     case ELOOP:
         return MOFS_ELOOP;
+#if defined(EOPNOTSUPP)
+    case EOPNOTSUPP:
+        return MOFS_ENOTSUP;
+#endif
+#if defined(ENOTSUP) && (!defined(EOPNOTSUPP) || (ENOTSUP != EOPNOTSUPP))
+    case ENOTSUP:
+        return MOFS_ENOTSUP;
+#endif
     default:
         return MOFS_EIO;
     }
@@ -129,6 +137,14 @@ int mofs_to_os_errno(int mofs_errno)
         return ENOTEMPTY;
     case MOFS_ELOOP:
         return ELOOP;
+    case MOFS_ENOTSUP:
+#if defined(ENOTSUP)
+        return ENOTSUP;
+#elif defined(EOPNOTSUPP)
+        return EOPNOTSUPP;
+#else
+        return EIO;
+#endif
     default:
         return EIO;
     }

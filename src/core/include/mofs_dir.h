@@ -43,6 +43,10 @@ extern mofs_dirhandle_t dirhandle_pool[MOFS_DIRHANDLE_POOL_SIZE];
  *******************************************************/
 
 int find_dir_entry(char *component, int parent_inode_num, int *child_inode_num);
+int remove_dir_entry(const char *component, int parent_inode_num);
+int add_dir_entry(const char *component, int parent_inode_num, int child_inode_num);
+int mofs_mkdir_core(const char *path, mode_t mode);
+int mofs_rmdir_core(const char *path);
 
 int mofs_opendir_core(const char *path, mofs_dirhandle_t **handle);
 int mofs_closedir_core(mofs_dirhandle_t **handle);
