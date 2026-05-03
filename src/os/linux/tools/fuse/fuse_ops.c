@@ -19,11 +19,87 @@ struct fuse_operations op = {
     .init    = mofs_init_fuse,
     .destroy = mofs_destroy_fuse,
     .getattr = mofs_getattr_fuse,
+    .mkdir   = mofs_mkdir_fuse,
+    .rmdir   = mofs_rmdir_fuse,
+    .unlink  = mofs_unlink_fuse,
+    .create  = mofs_create_fuse,
     .open    = mofs_open_fuse,
     .release = mofs_release_fuse,
     .readdir = mofs_readdir_fuse,
     .read    = mofs_read_fuse,
+    .write   = mofs_write_fuse,
 };
+
+static int build_mofs_open_args(int fuse_flags, mode_t requested_mode, bool force_create, int *mofs_flags, mode_t *mode)
+{
+    int                  flags = 0;
+    mode_t               out_mode;
+    struct fuse_context *context = NULL;
+
+    if ((mofs_flags == NULL) || (mode == NULL)) {
+        return MOFS_EINVAL;
+    }
+
+    switch (fuse_flags & O_ACCMODE) {
+    case O_RDONLY:
+        flags = MOFS_OFLAG_RDONLY;
+        break;
+    case O_WRONLY:
+        flags = MOFS_OFLAG_WRONLY;
+        break;
+    case O_RDWR:
+        flags = MOFS_OFLAG_RDWR;
+        break;
+    default:
+        return MOFS_EINVAL;
+    }
+
+#ifdef O_DIRECTORY
+    if ((fuse_flags & O_DIRECTORY) != 0) {
+        flags |= MOFS_OFLAG_DIRECTORY;
+    }
+#endif
+#ifdef O_EXCL
+    if ((fuse_flags & O_EXCL) != 0) {
+        flags |= MOFS_OFLAG_EXCL;
+    }
+#endif
+#if 0 /* Not supported */
+#ifdef O_TRUNC
+    if ((fuse_flags & O_TRUNC) != 0) {
+        flags |= MOFS_OFLAG_TRUNC;
+    }
+#endif
+#ifdef O_APPEND
+    if ((fuse_flags & O_APPEND) != 0) {
+        flags |= MOFS_OFLAG_APPEND;
+    }
+#endif
+#ifdef O_SYNC
+    if ((fuse_flags & O_SYNC) != 0) {
+        flags |= MOFS_OFLAG_SYNC;
+    }
+#endif
+#endif /* Not supported */
+    out_mode = requested_mode;
+#ifdef O_CREAT
+    if (force_create || ((fuse_flags & O_CREAT) != 0)) {
+        flags |= MOFS_OFLAG_CREAT;
+        context = fuse_get_context();
+        if (out_mode == 0U) {
+            out_mode =
+                (mode_t)(MOFS_S_IRUSR | MOFS_S_IWUSR | MOFS_S_IRGRP | MOFS_S_IWGRP | MOFS_S_IROTH | MOFS_S_IWOTH);
+        }
+        if (context != NULL) {
+            out_mode = (mode_t)(out_mode & ~(context->umask));
+        }
+    }
+#endif
+
+    *mofs_flags = flags;
+    *mode       = out_mode;
+    return 0;
+}
 
 /**
  * @brief Initialize MOFS core during FUSE startup.
@@ -117,6 +193,7 @@ int mofs_getattr_fuse(const char *path, struct stat *stbuf, struct fuse_file_inf
  */
 int mofs_open_fuse(const char *path, struct fuse_file_info *fi)
 {
+    int                ret        = 0;
     int                mofs_flags = 0;
     mode_t             mode       = 0;
     mofs_filehandle_t *handle     = NULL;
@@ -125,57 +202,50 @@ int mofs_open_fuse(const char *path, struct fuse_file_info *fi)
         return -(mofs_to_os_errno(MOFS_EINVAL));
     }
 
-    switch (fi->flags & O_ACCMODE) {
-    case O_RDONLY:
-        mofs_flags = MOFS_OFLAG_RDONLY;
-        break;
-    case O_WRONLY:
-        mofs_flags = MOFS_OFLAG_WRONLY;
-        break;
-    case O_RDWR:
-        mofs_flags = MOFS_OFLAG_RDWR;
-        break;
-    default:
+    ret = build_mofs_open_args(fi->flags, 0U, false, &mofs_flags, &mode);
+    if (ret != 0) {
+        return -(mofs_to_os_errno(ret));
+    }
+
+    handle = mofs_open(path, mofs_flags, mode);
+    if (handle == NULL) {
+        return -errno;
+    }
+
+    fi->fh = (uint64_t)(uintptr_t)handle;
+    return 0;
+}
+
+/**
+ * @brief Create a file and cache handle in FUSE file info.
+ *
+ * Function behavior:
+ * - Converts FUSE/Linux open flags and create mode to MOFS arguments.
+ * - Opens path through POSIX wrapper with create flag and stores handle in `fi->fh`.
+ *
+ * @param[in] path Target file path.
+ * @param[in] mode Create mode bits provided by FUSE.
+ * @param[in,out] fi FUSE file info that stores per-open handle.
+ * @return 0 on success.
+ * @return Negative errno value on failure.
+ */
+int mofs_create_fuse(const char *path, mode_t mode, struct fuse_file_info *fi)
+{
+    int                ret        = 0;
+    int                mofs_flags = 0;
+    mode_t             mofs_mode  = 0;
+    mofs_filehandle_t *handle     = NULL;
+
+    if ((path == NULL) || (fi == NULL)) {
         return -(mofs_to_os_errno(MOFS_EINVAL));
     }
 
-#ifdef O_DIRECTORY
-    if ((fi->flags & O_DIRECTORY) != 0) {
-        mofs_flags |= MOFS_OFLAG_DIRECTORY;
+    ret = build_mofs_open_args(fi->flags, mode, true, &mofs_flags, &mofs_mode);
+    if (ret != 0) {
+        return -(mofs_to_os_errno(ret));
     }
-#endif
-#ifdef O_CREAT
-    if ((fi->flags & O_CREAT) != 0) {
-        struct fuse_context *context = fuse_get_context();
-        mode = (mode_t)((MOFS_S_IRUSR | MOFS_S_IWUSR | MOFS_S_IRGRP | MOFS_S_IWGRP | MOFS_S_IROTH | MOFS_S_IWOTH) &
-                        ~(context->umask));
-        mofs_flags |= MOFS_OFLAG_CREAT;
-    }
-#endif
-#if 0 /* Not supported yet */
-#ifdef O_EXCL
-    if ((fi->flags & O_EXCL) != 0) {
-        mofs_flags |= MOFS_OFLAG_EXCL;
-    }
-#endif
-#ifdef O_TRUNC
-    if ((fi->flags & O_TRUNC) != 0) {
-        mofs_flags |= MOFS_OFLAG_TRUNC;
-    }
-#endif
-#ifdef O_APPEND
-    if ((fi->flags & O_APPEND) != 0) {
-        mofs_flags |= MOFS_OFLAG_APPEND;
-    }
-#endif
-#ifdef O_SYNC
-    if ((fi->flags & O_SYNC) != 0) {
-        mofs_flags |= MOFS_OFLAG_SYNC;
-    }
-#endif
-#endif /* Not supported yet */
 
-    handle = mofs_open(path, mofs_flags, mode);
+    handle = mofs_open(path, mofs_flags, mofs_mode);
     if (handle == NULL) {
         return -errno;
     }
@@ -214,6 +284,83 @@ int mofs_release_fuse(const char *path, struct fuse_file_info *fi)
         return -errno;
     }
 
+    return 0;
+}
+
+/**
+ * @brief Unlink a file path through FUSE.
+ *
+ * Function behavior:
+ * - Calls POSIX wrapper `mofs_unlink()`.
+ * - Returns negative `errno` on failure.
+ *
+ * @param[in] path Target file path.
+ * @return 0 on success.
+ * @return Negative errno value on failure.
+ */
+int mofs_unlink_fuse(const char *path)
+{
+    if (path == NULL) {
+        return -(mofs_to_os_errno(MOFS_EINVAL));
+    }
+    if (mofs_unlink(path) != 0) {
+        return -errno;
+    }
+    return 0;
+}
+
+/**
+ * @brief Create a directory path through FUSE.
+ *
+ * Function behavior:
+ * - Applies caller umask to requested mode.
+ * - Calls POSIX wrapper `mofs_mkdir()`.
+ * - Returns negative `errno` on failure.
+ *
+ * @param[in] path Target directory path.
+ * @param[in] mode Requested directory mode.
+ * @return 0 on success.
+ * @return Negative errno value on failure.
+ */
+int mofs_mkdir_fuse(const char *path, mode_t mode)
+{
+    mode_t               masked_mode = mode;
+    struct fuse_context *context     = NULL;
+
+    if (path == NULL) {
+        return -(mofs_to_os_errno(MOFS_EINVAL));
+    }
+
+    context = fuse_get_context();
+    if (context != NULL) {
+        masked_mode = (mode_t)(masked_mode & ~(context->umask));
+    }
+
+    if (mofs_mkdir(path, masked_mode) != 0) {
+        return -errno;
+    }
+    return 0;
+}
+
+/**
+ * @brief Remove an empty directory path through FUSE.
+ *
+ * Function behavior:
+ * - Calls POSIX wrapper `mofs_rmdir()`.
+ * - Returns negative `errno` on failure.
+ *
+ * @param[in] path Target directory path.
+ * @return 0 on success.
+ * @return Negative errno value on failure.
+ */
+int mofs_rmdir_fuse(const char *path)
+{
+    if (path == NULL) {
+        return -(mofs_to_os_errno(MOFS_EINVAL));
+    }
+    if (mofs_rmdir(path) != 0) {
+        return -errno;
+    }
     return 0;
 }
 
@@ -304,7 +451,8 @@ out:
  * @brief Read file data for a path.
  *
  * Function behavior:
- * - Placeholder implementation. File read operation is not implemented yet.
+ * - Uses opened handle from `fi->fh` and dispatches to POSIX wrapper `mofs_read()`.
+ * - Synchronizes file offset with requested FUSE read offset.
  *
  * @param[in] path Target file path.
  * @param[out] buf Destination buffer for read data.
@@ -320,7 +468,7 @@ int mofs_read_fuse(const char *path, char *buf, size_t size, off_t offset, struc
     mofs_filehandle_t *handle = NULL;
     (void)path;
 
-    if ((buf == NULL) || (offset < 0) || (fi == NULL) || (fi->fh == 0)) {
+    if ((buf == NULL) || (offset < 0) || ((uint64_t)offset > (uint64_t)UINT32_MAX) || (fi == NULL) || (fi->fh == 0)) {
         return -(mofs_to_os_errno(MOFS_EINVAL));
     }
 
@@ -331,6 +479,45 @@ int mofs_read_fuse(const char *path, char *buf, size_t size, off_t offset, struc
     handle              = (mofs_filehandle_t *)(uintptr_t)(fi->fh);
     handle->file_offset = (unsigned int)offset;
     ret                 = mofs_read(handle, buf, size);
+    if (ret < 0) {
+        return -errno;
+    }
+
+    return ret;
+}
+
+/**
+ * @brief Write file data for a path.
+ *
+ * Function behavior:
+ * - Uses opened handle from `fi->fh` and dispatches to POSIX wrapper `mofs_write()`.
+ * - Synchronizes file offset with requested FUSE write offset.
+ *
+ * @param[in] path Target file path.
+ * @param[in] buf Source buffer containing write data.
+ * @param[in] size Number of bytes requested to write.
+ * @param[in] offset Write offset in bytes.
+ * @param[in] fi FUSE file info.
+ * @return Number of bytes written on success.
+ * @return Negative errno value on failure.
+ */
+int mofs_write_fuse(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
+{
+    int                ret    = 0;
+    mofs_filehandle_t *handle = NULL;
+    (void)path;
+
+    if ((buf == NULL) || (offset < 0) || ((uint64_t)offset > (uint64_t)UINT32_MAX) || (fi == NULL) || (fi->fh == 0)) {
+        return -(mofs_to_os_errno(MOFS_EINVAL));
+    }
+
+    if (size == 0U) {
+        return 0;
+    }
+
+    handle              = (mofs_filehandle_t *)(uintptr_t)(fi->fh);
+    handle->file_offset = (unsigned int)offset;
+    ret                 = mofs_write(handle, buf, size);
     if (ret < 0) {
         return -errno;
     }

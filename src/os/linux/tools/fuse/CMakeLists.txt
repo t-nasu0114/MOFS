@@ -18,6 +18,7 @@ target_compile_definitions(${FUSE_EXE_NAME} PRIVATE SELF_NAME=\"${FUSE_EXE_NAME}
 
 # Setting for FUSE
 target_compile_definitions(${FUSE_EXE_NAME} PRIVATE FUSE_USE_VERSION=31)
+target_compile_definitions(${FUSE_EXE_NAME} PRIVATE _FILE_OFFSET_BITS=64)
 target_link_libraries(${FUSE_EXE_NAME} PRIVATE ${FUSE_LIBRARIES})
 target_include_directories(${FUSE_EXE_NAME} PRIVATE ${FUSE_INCLUDE_DIRS})
 target_compile_options(${FUSE_EXE_NAME} PRIVATE ${FUSE_CFLAGS_OTHER})

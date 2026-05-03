@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 project(MyProject)
 set(CMAKE_C_STANDARD 99)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if(ZEPHYR_BASE)
     set(PLATFORM "zephyr")
