@@ -75,6 +75,7 @@ int write_file_data_block(int inode_num, const void *buf, unsigned int start_blk
 /* external functions */
 int mofs_open_core(const char *path, int flags, mode_t mode, mofs_filehandle_t **handle);
 int mofs_close_core(mofs_filehandle_t **handle);
+int mofs_create_core(const char *path, mode_t mode, int *inode_num);
 int mofs_unlink_core(const char *path);
 int mofs_read_core(mofs_filehandle_t **handle, void *buf, size_t size, off_t *offset, size_t *read_size,
                    bool update_offset);

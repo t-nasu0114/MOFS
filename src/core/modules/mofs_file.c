@@ -13,6 +13,9 @@
 /* File handle pool */
 mofs_filehandle_t filehandle_pool[MOFS_FILEHANDLE_POOL_SIZE];
 
+/* internal functions */
+static int check_open_permission(int flags, mofs_user_ctx_t *user, mofs_inode_t *inode);
+
 static int get_free_filehandle_index(void)
 {
     for (int i = 0; i < MOFS_FILEHANDLE_POOL_SIZE; i++) {
@@ -213,6 +216,102 @@ int write_file_data_block(int inode_num, const void *buf, unsigned int start_blk
 }
 
 /**
+ * @brief Create a regular file entry and inode in MOFS core layer.
+ *
+ * Function behavior:
+ * - Resolves parent directory and leaf component from `path`.
+ * - Returns `MOFS_EEXIST` when the target path already exists.
+ * - Allocates and initializes a new inode for an empty regular file.
+ * - Adds a directory entry under the resolved parent directory.
+ * - Rolls back allocated inode when creation fails before link completion.
+ *
+ * @param[in] path NULL-terminated absolute path string.
+ * @param[in] mode Permission bits for the new file.
+ * @param[out] inode_num Destination pointer for created inode number.
+ * @return 0 on success.
+ * @return MOFS_EINVAL if arguments are invalid.
+ * @return MOFS_EEXIST if target path already exists.
+ * @return MOFS_EPERM if caller user context is unavailable.
+ * @return Non-zero errno value propagated from path/inode/dir helpers.
+ */
+int mofs_create_core(const char *path, mode_t mode, int *inode_num)
+{
+    int              ret                 = 0;
+    int              allocated_inode_num = -1;
+    bool             inode_allocated     = false;
+    bool             dirent_linked       = false;
+    mofs_inode_t     inode_buf;
+    mofs_inode_t     parent_inode;
+    mofs_user_ctx_t  user;
+    mofs_path_info_t path_info;
+
+    if ((path == NULL) || (inode_num == NULL)) {
+        return MOFS_EINVAL;
+    }
+    *inode_num = -1;
+
+    mofs_memset(&path_info, 0, sizeof(path_info));
+    ret = mofs_resolve_path(path, MOFS_PATH_RESOLVE_PARENT | MOFS_PATH_RESOLVE_INODE | MOFS_PATH_ALLOW_MISSING_LEAF,
+                            &path_info);
+    if (ret != 0) {
+        return ret;
+    }
+    if (path_info.leaf_found) {
+        return MOFS_EEXIST;
+    }
+
+    ret = mofs_get_caller_user(&user);
+    if (ret != 0) {
+        return ret;
+    }
+    if (user.valid == false) {
+        return MOFS_EPERM;
+    }
+
+    ret = mofs_read_inode(path_info.parent_inode_num, &parent_inode);
+    if (ret != 0) {
+        return ret;
+    }
+    ret = check_open_permission(MOFS_OFLAG_WRONLY, &user, &parent_inode);
+    if (ret != 0) {
+        return ret;
+    }
+
+    ret = allocate_inode(&allocated_inode_num);
+    if (ret != 0) {
+        goto rollback;
+    }
+    inode_allocated = true;
+
+    mofs_memset(&inode_buf, 0, sizeof(inode_buf));
+    inode_buf.i_size  = 0U;
+    inode_buf.i_links = 1U;
+    inode_buf.i_mode  = (uint16_t)(MOFS_FTYPE_REG | (mode & 0777U));
+    inode_buf.i_uid   = user.uid;
+    inode_buf.i_gid   = user.gid;
+
+    ret = mofs_write_inode(allocated_inode_num, &inode_buf);
+    if (ret != 0) {
+        goto rollback;
+    }
+
+    ret = add_dir_entry(path_info.leaf_name, path_info.parent_inode_num, allocated_inode_num);
+    if (ret != 0) {
+        goto rollback;
+    }
+    dirent_linked = true;
+
+    *inode_num = allocated_inode_num;
+    return 0;
+
+rollback:
+    if (inode_allocated && (dirent_linked == false)) {
+        (void)free_inode(allocated_inode_num);
+    }
+    return ret;
+}
+
+/**
  * @brief Unlink a regular file from a directory path.
  *
  * Function behavior:
@@ -230,9 +329,9 @@ int write_file_data_block(int inode_num, const void *buf, unsigned int start_blk
  */
 int mofs_unlink_core(const char *path)
 {
-    int              ret             = 0;
+    int              ret              = 0;
     int              target_inode_num = -1;
-    unsigned int     used_blk_num    = 0U;
+    unsigned int     used_blk_num     = 0U;
     mofs_inode_t     target_inode;
     mofs_path_info_t path_info;
 
@@ -405,13 +504,14 @@ out:
  *
  * @param[in] path NULL-terminated absolute path string.
  * @param[in] flags Open flags (`MOFS_OFLAG_*`).
- * @param[in] mode File mode for creation (currently unused).
+ * @param[in] mode File mode for creation path.
  * @param[out] handle Destination pointer for allocated file handle.
  * @return 0 on success.
  * @return MOFS_EINVAL if arguments or open flags are invalid.
  * @return MOFS_EPERM or MOFS_EACCES if caller has no permission.
  * @return MOFS_ENOENT if path does not exist and create is not requested.
- * @return MOFS_ENOTSUP if create is requested (not supported yet).
+ * @return MOFS_EEXIST if `MOFS_OFLAG_CREAT | MOFS_OFLAG_EXCL` is specified
+ *         for an already existing file.
  * @return MOFS_ENOTDIR if directory open is requested for a non-directory.
  * @return MOFS_ENFILE if file handle pool is exhausted.
  * @return Other non-zero errno values propagated from lower layers.
@@ -423,9 +523,6 @@ int mofs_open_core(const char *path, int flags, mode_t mode, mofs_filehandle_t *
     int             index     = -1;
     mofs_inode_t    inode;
     mofs_user_ctx_t user;
-
-    /* Note : currently supports only the absolute path */
-    (void)mode;
 
     if ((path == NULL) || (handle == NULL)) {
         ret = MOFS_EINVAL;
@@ -442,16 +539,24 @@ int mofs_open_core(const char *path, int flags, mode_t mode, mofs_filehandle_t *
 
     ret = mofs_path_to_inode_num(path, &inode_num);
     if (ret == 0) {
+        if ((flags & MOFS_OFLAG_CREAT) && (flags & MOFS_OFLAG_EXCL)) {
+            ret = MOFS_EEXIST;
+            goto out;
+        }
         /* Find file inode */
         ret = mofs_read_inode(inode_num, &inode);
         if (ret != 0) {
             goto out;
         }
     } else if ((ret == MOFS_ENOENT) && (flags & MOFS_OFLAG_CREAT)) {
-        /* Create file */
-        /* FIXME : File creation is not supported yet */
-        ret = MOFS_ENOTSUP;
-        goto out;
+        ret = mofs_create_core(path, mode, &inode_num);
+        if (ret != 0) {
+            goto out;
+        }
+        ret = mofs_read_inode(inode_num, &inode);
+        if (ret != 0) {
+            goto out;
+        }
     } else {
         goto out;
     }
@@ -733,7 +838,7 @@ int mofs_write_core(mofs_filehandle_t **handle, const void *buf, size_t size, of
             goto out;
         }
         alloc_done = true;
-        ret = mofs_read_inode((*handle)->inode_num, &inode);
+        ret        = mofs_read_inode((*handle)->inode_num, &inode);
         if (ret != 0) {
             goto out;
         }
@@ -772,9 +877,9 @@ int mofs_write_core(mofs_filehandle_t **handle, const void *buf, size_t size, of
 
     /* zero-fill the gap between old EOF and write offset if needed */
     if ((uint64_t)old_size < (uint64_t)(*offset)) {
-        uint64_t start_off       = (uint64_t)start_blk_num * (uint64_t)MOFS_BLK_SIZE;
-        uint64_t zero_from_off   = ((uint64_t)old_size > start_off) ? (uint64_t)old_size : start_off;
-        uint64_t zero_to_off     = (uint64_t)(*offset);
+        uint64_t start_off     = (uint64_t)start_blk_num * (uint64_t)MOFS_BLK_SIZE;
+        uint64_t zero_from_off = ((uint64_t)old_size > start_off) ? (uint64_t)old_size : start_off;
+        uint64_t zero_to_off   = (uint64_t)(*offset);
         if (zero_to_off > zero_from_off) {
             size_t zero_from_inbuf = (size_t)(zero_from_off - start_off);
             size_t zero_size       = (size_t)(zero_to_off - zero_from_off);

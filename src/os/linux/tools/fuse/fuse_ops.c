@@ -3,14 +3,14 @@
  */
 
 #include "fuse_ops.h"
-#include <fcntl.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <fuse.h>
-#include <stdint.h>
 #include <mofs_core.h>
 #include <mofs_errno.h>
 #include <mofs_inode.h>
 #include <mofs_posix.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -118,6 +118,7 @@ int mofs_getattr_fuse(const char *path, struct stat *stbuf, struct fuse_file_inf
 int mofs_open_fuse(const char *path, struct fuse_file_info *fi)
 {
     int                mofs_flags = 0;
+    mode_t             mode       = 0;
     mofs_filehandle_t *handle     = NULL;
 
     if ((path == NULL) || (fi == NULL)) {
@@ -145,11 +146,36 @@ int mofs_open_fuse(const char *path, struct fuse_file_info *fi)
 #endif
 #ifdef O_CREAT
     if ((fi->flags & O_CREAT) != 0) {
+        struct fuse_context *context = fuse_get_context();
+        mode = (mode_t)((MOFS_S_IRUSR | MOFS_S_IWUSR | MOFS_S_IRGRP | MOFS_S_IWGRP | MOFS_S_IROTH | MOFS_S_IWOTH) &
+                        ~(context->umask));
         mofs_flags |= MOFS_OFLAG_CREAT;
     }
 #endif
+#if 0 /* Not supported yet */
+#ifdef O_EXCL
+    if ((fi->flags & O_EXCL) != 0) {
+        mofs_flags |= MOFS_OFLAG_EXCL;
+    }
+#endif
+#ifdef O_TRUNC
+    if ((fi->flags & O_TRUNC) != 0) {
+        mofs_flags |= MOFS_OFLAG_TRUNC;
+    }
+#endif
+#ifdef O_APPEND
+    if ((fi->flags & O_APPEND) != 0) {
+        mofs_flags |= MOFS_OFLAG_APPEND;
+    }
+#endif
+#ifdef O_SYNC
+    if ((fi->flags & O_SYNC) != 0) {
+        mofs_flags |= MOFS_OFLAG_SYNC;
+    }
+#endif
+#endif /* Not supported yet */
 
-    handle = mofs_open(path, mofs_flags, 0);
+    handle = mofs_open(path, mofs_flags, mode);
     if (handle == NULL) {
         return -errno;
     }
@@ -210,10 +236,10 @@ int mofs_release_fuse(const char *path, struct fuse_file_info *fi)
 int mofs_readdir_fuse(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi,
                       enum fuse_readdir_flags flags)
 {
-    int               ret     = 0;
-    off_t             cursor  = 0;
-    mofs_dirhandle_t *handle  = NULL;
-    mofs_dirent_t    *dirent  = NULL;
+    int               ret    = 0;
+    off_t             cursor = 0;
+    mofs_dirhandle_t *handle = NULL;
+    mofs_dirent_t    *dirent = NULL;
 
     (void)flags;
     (void)fi;
@@ -247,7 +273,7 @@ int mofs_readdir_fuse(const char *path, void *buf, fuse_fill_dir_t filler, off_t
     }
 
     while (true) {
-        errno = 0;
+        errno  = 0;
         dirent = mofs_readdir(handle);
         if (dirent == NULL) {
             if (errno != 0) {
