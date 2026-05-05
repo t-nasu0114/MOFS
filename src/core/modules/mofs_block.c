@@ -4,7 +4,13 @@
 #include <mofs_devio.h>
 #include <mofs_errno.h>
 #include <mofs_inode.h>
+#include <mofs_mem.h>
 #include <mofs_type.h>
+
+static size_t mofs_io_blk_sz(void)
+{
+    return (size_t)ctx.sp_blk.blk_size;
+}
 
 /**
  * @brief Set or clear one bit in the data bitmap.
@@ -24,11 +30,13 @@
 static int set_data_bitmap_bit(unsigned int data_idx, bool set_used)
 {
     int           ret             = 0;
-    unsigned int  target_blk      = data_idx / (MOFS_BLK_SIZE * 8U);
-    unsigned int  bit_in_blk      = data_idx % (MOFS_BLK_SIZE * 8U);
+    size_t const  blk_sz          = mofs_io_blk_sz();
+    unsigned int  bits_per_bitmap = (unsigned int)(blk_sz * 8U);
+    unsigned int  target_blk      = data_idx / bits_per_bitmap;
+    unsigned int  bit_in_blk      = data_idx % bits_per_bitmap;
     unsigned int  target_byte     = bit_in_blk / 8U;
     unsigned int  target_bit      = bit_in_blk % 8U;
-    unsigned char bitmap_buf[MOFS_BLK_SIZE];
+    unsigned char *bitmap_buf     = NULL;
     unsigned int  read_blk_num    = 0U;
     unsigned int  written_blk_num = 0U;
     size_t        fraction        = 0U;
@@ -37,14 +45,20 @@ static int set_data_bitmap_bit(unsigned int data_idx, bool set_used)
         return MOFS_EINVAL;
     }
 
+    bitmap_buf = (unsigned char *)mofs_malloc(blk_sz);
+    if (bitmap_buf == NULL) {
+        return get_errno();
+    }
+
     /* Load the bitmap block that owns target bit. */
     ret = read_continuous_blocks(ctx.dev_fd, bitmap_buf, 1U, ctx.sp_blk.data_bitmap_start + target_blk, &read_blk_num,
                                  &fraction);
     if (ret != 0) {
-        return ret;
+        goto out;
     }
     if ((read_blk_num != 1U) || (fraction != 0U)) {
-        return MOFS_EIO;
+        ret = MOFS_EIO;
+        goto out;
     }
 
     /* Toggle exactly one bit for the target data block. */
@@ -58,13 +72,15 @@ static int set_data_bitmap_bit(unsigned int data_idx, bool set_used)
     ret = write_continuous_blocks(ctx.dev_fd, bitmap_buf, 1U, ctx.sp_blk.data_bitmap_start + target_blk, &written_blk_num,
                                   &fraction);
     if (ret != 0) {
-        return ret;
+        goto out;
     }
     if ((written_blk_num != 1U) || (fraction != 0U)) {
-        return MOFS_EIO;
+        ret = MOFS_EIO;
     }
 
-    return 0;
+out:
+    mofs_free(bitmap_buf);
+    return ret;
 }
 
 /**
@@ -124,11 +140,19 @@ static int find_free_data_block_indices(unsigned int *allocated_data_idx, unsign
 
     bitmap_blk_num = ctx.sp_blk.inode_table_start - ctx.sp_blk.data_bitmap_start;
 
+    size_t const       blk_sz          = mofs_io_blk_sz();
+    unsigned char     *bitmap_buf     = NULL;
+    unsigned int const bits_per_bitmap = (unsigned int)(blk_sz * 8U);
+
+    bitmap_buf = (unsigned char *)mofs_malloc(blk_sz);
+    if (bitmap_buf == NULL) {
+        return get_errno();
+    }
+
     /* Scan each bitmap block until enough free blocks are found. */
     for (unsigned int blk_idx = 0U; (blk_idx < bitmap_blk_num) && (*allocated_num < required_alloc_num); blk_idx++) {
-        unsigned char bitmap_buf[MOFS_BLK_SIZE];
-        unsigned int  read_blk_num = 0U;
-        size_t        fraction     = 0U;
+        unsigned int read_blk_num = 0U;
+        size_t       fraction      = 0U;
 
         ret = read_continuous_blocks(ctx.dev_fd, bitmap_buf, 1U, ctx.sp_blk.data_bitmap_start + blk_idx, &read_blk_num,
                                      &fraction);
@@ -141,9 +165,9 @@ static int find_free_data_block_indices(unsigned int *allocated_data_idx, unsign
         }
 
         /* Enumerate bits in the bitmap block and capture free entries. */
-        for (unsigned int byte_idx = 0U; (byte_idx < MOFS_BLK_SIZE) && (*allocated_num < required_alloc_num); byte_idx++) {
+        for (unsigned int byte_idx = 0U; (byte_idx < blk_sz) && (*allocated_num < required_alloc_num); byte_idx++) {
             for (unsigned int bit_idx = 0U; (bit_idx < 8U) && (*allocated_num < required_alloc_num); bit_idx++) {
-                unsigned int data_idx = blk_idx * (MOFS_BLK_SIZE * 8U) + byte_idx * 8U + bit_idx;
+                unsigned int data_idx = blk_idx * bits_per_bitmap + byte_idx * 8U + bit_idx;
                 if (data_idx >= ctx.sp_blk.data_blk_num) {
                     break;
                 }
@@ -159,6 +183,7 @@ static int find_free_data_block_indices(unsigned int *allocated_data_idx, unsign
         ret = MOFS_ENOSPC;
     }
 
+    mofs_free(bitmap_buf);
     return ret;
 }
 
@@ -198,7 +223,8 @@ int allocate_data_block(int inode_num, unsigned int req_blk_num)
         return ret;
     }
 
-    used_blk_num = (inode_buf.i_size + MOFS_BLK_SIZE - 1U) / MOFS_BLK_SIZE;
+    used_blk_num =
+        (inode_buf.i_size + (uint32_t)ctx.sp_blk.blk_size - 1U) / (uint32_t)ctx.sp_blk.blk_size;
     if ((used_blk_num + req_blk_num) > MOFS_DATA_BLK_PER_FILE) {
         return MOFS_ENOSPC;
     }
@@ -273,7 +299,8 @@ int free_data_block(int inode_num, unsigned int start_blk_num, unsigned int req_
         return ret;
     }
 
-    used_blk_num = (inode_buf.i_size + MOFS_BLK_SIZE - 1U) / MOFS_BLK_SIZE;
+    used_blk_num =
+        (inode_buf.i_size + (uint32_t)ctx.sp_blk.blk_size - 1U) / (uint32_t)ctx.sp_blk.blk_size;
     if (start_blk_num >= used_blk_num) {
         return MOFS_EINVAL;
     }
@@ -332,19 +359,27 @@ int free_data_block(int inode_num, unsigned int start_blk_num, unsigned int req_
  * @brief Read exactly one filesystem block from the current device offset.
  *
  * Function behavior:
- * - Calls `dev_read()` for `MOFS_BLK_SIZE` bytes.
+ * - Calls `dev_read()` for `ctx.sp_blk.blk_size` bytes.
  * - Converts a low-level read error (`-1`) into `0` and reports the error
  *   code through `err`.
  *
  * @param[in] fd Device file descriptor.
  * @param[out] buf Destination buffer for one block.
  * @param[out] err Error code storage. Set to 0 on no low-level read error.
- * @return Number of bytes read (typically `MOFS_BLK_SIZE` or a short read).
+ * @return Number of bytes read (full block or a short read).
  * @return 0 when `dev_read()` fails with `-1` (details are stored in `*err`).
  */
 static int read_one_block(int fd, void *buf, int *err)
 {
-    int ret = dev_read(fd, buf, MOFS_BLK_SIZE);
+    size_t const nb = mofs_io_blk_sz();
+    int          ret;
+
+    if (nb == 0U) {
+        *err = MOFS_EINVAL;
+        return 0;
+    }
+
+    ret = dev_read(fd, buf, nb);
 
     if (ret == -1) {
         *err = get_errno();
@@ -378,19 +413,29 @@ static int read_one_block(int fd, void *buf, int *err)
 int read_continuous_blocks(int fd, void *buf, unsigned int req_blk_num, unsigned int start_blk_num,
                            unsigned int *read_blk_num, size_t *fraction)
 {
-    int err = 0;
-    int ret = 0;
+    int          err       = 0;
+    int          ret       = 0;
+    size_t const blk_bytes = mofs_io_blk_sz();
+    uint64_t     byte_off;
 
     if ((fd < 0) || (buf == NULL) || (read_blk_num == NULL) || (fraction == NULL)) {
         ret = MOFS_EINVAL;
     }
 
+    if ((ret == 0) && (blk_bytes == 0U)) {
+        ret = MOFS_EINVAL;
+    }
+
     /* Seek to start block */
     if (ret == 0) {
-        off_t offset = dev_lseek(fd, start_blk_num * MOFS_BLK_SIZE, MOFS_SEEK_SET);
+        byte_off = (uint64_t)start_blk_num * (uint64_t)blk_bytes;
+    }
+
+    if (ret == 0) {
+        off_t offset = dev_lseek(fd, (off_t)byte_off, MOFS_SEEK_SET);
         if (offset < 0) {
             ret = get_errno();
-        } else if ((offset % MOFS_BLK_SIZE) != 0) {
+        } else if (((uint64_t)offset % (uint64_t)blk_bytes) != 0ULL) {
             ret = MOFS_EINVAL;
         }
     }
@@ -399,20 +444,20 @@ int read_continuous_blocks(int fd, void *buf, unsigned int req_blk_num, unsigned
         *fraction     = 0U;
         *read_blk_num = 0U;
 
-        for (int i = 0; i < req_blk_num; i++) {
+        for (unsigned int i = 0U; i < req_blk_num; i++) {
             ret = read_one_block(fd, buf, &err);
             if (ret == 0) {
                 ret = err;
                 break;
-            } else if (ret != MOFS_BLK_SIZE) {
-                *fraction = ret;
+            } else if ((size_t)ret != blk_bytes) {
+                *fraction = (size_t)ret;
                 ret       = 0;
                 break;
             } else {
                 ret = 0;
             }
             *read_blk_num = *read_blk_num + 1;
-            buf           = (char *)buf + MOFS_BLK_SIZE;
+            buf           = (char *)buf + blk_bytes;
         }
     }
 
@@ -423,19 +468,27 @@ int read_continuous_blocks(int fd, void *buf, unsigned int req_blk_num, unsigned
  * @brief Write exactly one filesystem block at the current device offset.
  *
  * Function behavior:
- * - Calls `dev_write()` for `MOFS_BLK_SIZE` bytes.
+ * - Calls `dev_write()` for `ctx.sp_blk.blk_size` bytes.
  * - Converts a low-level write error (`-1`) into `0` and reports the error
  *   code through `err`.
  *
  * @param[in] fd Device file descriptor.
  * @param[in] buf Source buffer containing one block to write.
  * @param[out] err Error code storage. Set to 0 on no low-level write error.
- * @return Number of bytes written (typically `MOFS_BLK_SIZE` or a short write).
+ * @return Number of bytes written (full block or a short write).
  * @return 0 when `dev_write()` fails with `-1` (details are stored in `*err`).
  */
 static int write_one_block(int fd, const void *buf, int *err)
 {
-    int ret = dev_write(fd, buf, MOFS_BLK_SIZE);
+    size_t const nb = mofs_io_blk_sz();
+    int          ret;
+
+    if (nb == 0U) {
+        *err = MOFS_EINVAL;
+        return 0;
+    }
+
+    ret = dev_write(fd, buf, nb);
 
     if (ret == -1) {
         *err = get_errno();
@@ -469,19 +522,26 @@ static int write_one_block(int fd, const void *buf, int *err)
 int write_continuous_blocks(int fd, const void *buf, unsigned int req_blk_num, unsigned int start_blk_num,
                             unsigned int *written_blk_num, size_t *fraction)
 {
-    int err = 0;
-    int ret = 0;
+    int          err       = 0;
+    int          ret       = 0;
+    size_t const blk_bytes = mofs_io_blk_sz();
+    uint64_t     byte_off;
 
     if ((fd < 0) || (buf == NULL) || (written_blk_num == NULL) || (fraction == NULL)) {
         ret = MOFS_EINVAL;
     }
 
+    if ((ret == 0) && (blk_bytes == 0U)) {
+        ret = MOFS_EINVAL;
+    }
+
     /* Align check */
     if (ret == 0) {
-        off_t offset = dev_lseek(fd, start_blk_num * MOFS_BLK_SIZE, MOFS_SEEK_SET);
+        byte_off       = (uint64_t)start_blk_num * (uint64_t)blk_bytes;
+        off_t offset   = dev_lseek(fd, (off_t)byte_off, MOFS_SEEK_SET);
         if (offset < 0) {
             ret = get_errno();
-        } else if ((offset % MOFS_BLK_SIZE) != 0) {
+        } else if (((uint64_t)offset % (uint64_t)blk_bytes) != 0ULL) {
             ret = MOFS_EINVAL;
         }
     }
@@ -490,22 +550,20 @@ int write_continuous_blocks(int fd, const void *buf, unsigned int req_blk_num, u
         *fraction        = 0U;
         *written_blk_num = 0U;
 
-        if (ret == 0) {
-            for (int i = 0; i < req_blk_num; i++) {
-                ret = write_one_block(fd, buf, &err);
-                if (ret == 0) {
-                    ret = err;
-                    break;
-                } else if (ret != MOFS_BLK_SIZE) {
-                    *fraction = ret;
-                    ret       = 0;
-                    break;
-                } else {
-                    ret = 0;
-                }
-                *written_blk_num = *written_blk_num + 1;
-                buf              = (char *)buf + MOFS_BLK_SIZE;
+        for (unsigned int i = 0U; i < req_blk_num; i++) {
+            ret = write_one_block(fd, buf, &err);
+            if (ret == 0) {
+                ret = err;
+                break;
+            } else if ((size_t)ret != blk_bytes) {
+                *fraction = (size_t)ret;
+                ret       = 0;
+                break;
+            } else {
+                ret = 0;
             }
+            *written_blk_num = *written_blk_num + 1;
+            buf              = (char *)buf + blk_bytes;
         }
     }
 

@@ -1,10 +1,7 @@
 
 #include <mofs_core.h>
-#include <mofs_devio.h>
-#include <mofs_errno.h>
 #include <mofs_format.h>
 #include <mofs_util.h>
-#include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -13,16 +10,16 @@ static void print_usage(const char *prog_name)
     MOFS_INF("Usage: %s [OPTIONS] DEVICE_FILE\n", prog_name);
     MOFS_INF("Options:\n");
     MOFS_INF("  -s, --size <NUM>   Specify file system size in blocks (default: auto)\n");
+    MOFS_INF("  -b, --block <NUM> Logical block size in bytes (-1 omit = %u)\n", (unsigned)MOFS_BLK_SIZE_DEFAULT);
     MOFS_INF("  -h, --help         Display this help message\n");
 }
 
 int main(int argc, char *argv[])
 {
-    int   fd;
     int   opt;
-    int   fs_size  = -1;
-    int   blk_size = -1;
-    char *device_file;
+    int   fs_size        = -1;
+    char *device_file    = NULL;
+    int   blk_size_param = -1;
 
     while ((opt = getopt(argc, argv, "s:b:h")) != -1) {
         switch (opt) {
@@ -30,11 +27,7 @@ int main(int argc, char *argv[])
             fs_size = atoi(optarg);
             break;
         case 'b':
-            blk_size = atoi(optarg);
-            if (blk_size != MOFS_BLK_SIZE) {
-                MOFS_ERR("Only %d block size is supported.\n", MOFS_BLK_SIZE);
-                return 1;
-            }
+            blk_size_param = atoi(optarg);
             break;
         case 'h':
             print_usage(argv[0]);
@@ -55,7 +48,7 @@ int main(int argc, char *argv[])
     }
 
     /* Format device */
-    if (mofs_format(device_file, fs_size, blk_size) != 0) {
+    if (mofs_format(device_file, fs_size, blk_size_param) != 0) {
         MOFS_ERR("Format error\n");
         return 1;
     }

@@ -1,5 +1,4 @@
 
-#include "mofs_block.h"
 #include <mofs_core.h>
 #include <mofs_devio.h>
 #include <mofs_dir.h>
@@ -35,10 +34,12 @@ mofs_ctx_t ctx = {.init = false, .dev_path = NULL, .dev_fd = 0};
  */
 int mofs_init_core(const char *path)
 {
-    int          ret          = 0;
-    unsigned int read_blk_num = 0;
-    size_t       fraction     = 0;
-    void        *buf          = NULL;
+    int                ret = 0;
+    int                nr  = 0;
+    mofs_superblock_t  sb_scratch;
+    unsigned long long vol_bytes = 0;
+
+    mofs_memset(&sb_scratch, 0, sizeof(sb_scratch));
 
     /* Open device */
     ctx.dev_path = mofs_malloc(mofs_strlen(path) + 1);
@@ -55,36 +56,44 @@ int mofs_init_core(const char *path)
         goto out2;
     }
 
-    /* Read superblock */
-    buf = mofs_malloc(MOFS_BLK_SIZE);
-    if (buf == NULL) {
+    /* Read superblock from block 0 (structure fits in first logical block). */
+    if (dev_lseek(ctx.dev_fd, 0, MOFS_SEEK_SET) < 0) {
         ret = get_errno();
         goto out3;
     }
 
-    ret = read_continuous_blocks(ctx.dev_fd, buf, 1, 0, &read_blk_num, &fraction);
-    if ((ret != 0) || (read_blk_num != 1)) {
-        ret = get_errno();
-        mofs_free(buf);
+    nr = dev_read(ctx.dev_fd, &sb_scratch, sizeof(sb_scratch));
+    if (nr != (int)sizeof(sb_scratch)) {
+        ret = MOFS_EIO;
+        MOFS_ERR("Superblock read failed");
         goto out3;
     }
 
-    if (((mofs_superblock_t *)buf)->magic != MOFS_MAGIC_NUM) {
+    if (sb_scratch.magic != MOFS_MAGIC_NUM) {
         ret = MOFS_EIO;
         MOFS_ERR("Device is not formatted");
         goto out3;
     }
 
-    ctx.sp_blk.magic              = ((mofs_superblock_t *)buf)->magic;
-    ctx.sp_blk.hole_blk_num       = ((mofs_superblock_t *)buf)->hole_blk_num;
-    ctx.sp_blk.inode_num          = ((mofs_superblock_t *)buf)->inode_num;
-    ctx.sp_blk.data_blk_num       = ((mofs_superblock_t *)buf)->data_blk_num;
-    ctx.sp_blk.inode_bitmap_start = ((mofs_superblock_t *)buf)->inode_bitmap_start;
-    ctx.sp_blk.data_bitmap_start  = ((mofs_superblock_t *)buf)->data_bitmap_start;
-    ctx.sp_blk.inode_table_start  = ((mofs_superblock_t *)buf)->inode_table_start;
-    ctx.sp_blk.data_region_start  = ((mofs_superblock_t *)buf)->data_region_start;
+    ret = mofs_validate_logical_blk_size(sb_scratch.blk_size);
+    if (ret != 0) {
+        MOFS_ERR("Invalid superblock block size");
+        goto out3;
+    }
 
-    mofs_free(buf);
+    vol_bytes = dev_get_size(ctx.dev_fd, &ret);
+    if (ret != 0) {
+        MOFS_ERR("Get device size error");
+        goto out3;
+    }
+    /* Device tail bytes smaller than one logical block are ignored. */
+    if ((vol_bytes / (unsigned long long)sb_scratch.blk_size) != (unsigned long long)sb_scratch.hole_blk_num) {
+        ret = MOFS_EINVAL;
+        MOFS_ERR("Superblock volume size mismatch");
+        goto out3;
+    }
+
+    ctx.sp_blk = sb_scratch;
 
     /* Initialize directory handle pool */
     mofs_memset(dirhandle_pool, 0, sizeof(dirhandle_pool));

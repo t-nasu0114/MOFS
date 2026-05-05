@@ -23,27 +23,36 @@
  */
 static int set_inode_bitmap_bit(unsigned int inode_idx, bool set_used)
 {
-    int           ret             = 0;
-    unsigned int  target_blk      = inode_idx / (MOFS_BLK_SIZE * 8U);
-    unsigned int  bit_in_blk      = inode_idx % (MOFS_BLK_SIZE * 8U);
-    unsigned int  target_byte     = bit_in_blk / 8U;
-    unsigned int  target_bit      = bit_in_blk % 8U;
-    unsigned char bitmap_buf[MOFS_BLK_SIZE];
-    unsigned int  read_blk_num    = 0U;
-    unsigned int  written_blk_num = 0U;
-    size_t        fraction        = 0U;
+    int               ret               = 0;
+    uint32_t const    bb                = ctx.sp_blk.blk_size;
+    size_t const      blk_sz            = (size_t)bb;
+    unsigned int      bits_per_bitmap   = bb * 8U;
+    unsigned int      target_blk        = inode_idx / bits_per_bitmap;
+    unsigned int      bit_in_blk        = inode_idx % bits_per_bitmap;
+    unsigned int      target_byte       = bit_in_blk / 8U;
+    unsigned int      target_bit        = bit_in_blk % 8U;
+    unsigned char    *bitmap_buf        = NULL;
+    unsigned int      read_blk_num      = 0U;
+    unsigned int      written_blk_num   = 0U;
+    size_t            fraction          = 0U;
 
     if ((inode_idx < 3U) || (inode_idx >= ctx.sp_blk.inode_num)) {
         return MOFS_EINVAL;
     }
 
+    bitmap_buf = (unsigned char *)mofs_malloc(blk_sz);
+    if (bitmap_buf == NULL) {
+        return get_errno();
+    }
+
     ret = read_continuous_blocks(ctx.dev_fd, bitmap_buf, 1U, ctx.sp_blk.inode_bitmap_start + target_blk, &read_blk_num,
                                  &fraction);
     if (ret != 0) {
-        return ret;
+        goto out;
     }
     if ((read_blk_num != 1U) || (fraction != 0U)) {
-        return MOFS_EIO;
+        ret = MOFS_EIO;
+        goto out;
     }
 
     if (set_used) {
@@ -55,13 +64,15 @@ static int set_inode_bitmap_bit(unsigned int inode_idx, bool set_used)
     ret = write_continuous_blocks(ctx.dev_fd, bitmap_buf, 1U, ctx.sp_blk.inode_bitmap_start + target_blk, &written_blk_num,
                                   &fraction);
     if (ret != 0) {
-        return ret;
+        goto out;
     }
     if ((written_blk_num != 1U) || (fraction != 0U)) {
-        return MOFS_EIO;
+        ret = MOFS_EIO;
     }
 
-    return 0;
+out:
+    mofs_free(bitmap_buf);
+    return ret;
 }
 
 /**
@@ -122,10 +133,19 @@ static int find_free_inode_indices(unsigned int *allocated_inode_idx, unsigned i
 
     bitmap_blk_num = ctx.sp_blk.data_bitmap_start - ctx.sp_blk.inode_bitmap_start;
 
+    uint32_t const bb                = ctx.sp_blk.blk_size;
+    unsigned int   bits_per_bitmap   = bb * 8U;
+    size_t const   blk_sz            = (size_t)bb;
+    unsigned char *bitmap_buf        = NULL;
+
+    bitmap_buf = (unsigned char *)mofs_malloc(blk_sz);
+    if (bitmap_buf == NULL) {
+        return get_errno();
+    }
+
     for (unsigned int blk_idx = 0U; (blk_idx < bitmap_blk_num) && (*allocated_num < required_alloc_num); blk_idx++) {
-        unsigned char bitmap_buf[MOFS_BLK_SIZE];
-        unsigned int  read_blk_num = 0U;
-        size_t        fraction     = 0U;
+        unsigned int read_blk_num = 0U;
+        size_t       fraction      = 0U;
 
         ret = read_continuous_blocks(ctx.dev_fd, bitmap_buf, 1U, ctx.sp_blk.inode_bitmap_start + blk_idx, &read_blk_num,
                                      &fraction);
@@ -137,9 +157,9 @@ static int find_free_inode_indices(unsigned int *allocated_inode_idx, unsigned i
             break;
         }
 
-        for (unsigned int byte_idx = 0U; (byte_idx < MOFS_BLK_SIZE) && (*allocated_num < required_alloc_num); byte_idx++) {
+        for (unsigned int byte_idx = 0U; (byte_idx < bb) && (*allocated_num < required_alloc_num); byte_idx++) {
             for (unsigned int bit_idx = 0U; (bit_idx < 8U) && (*allocated_num < required_alloc_num); bit_idx++) {
-                unsigned int inode_idx = blk_idx * (MOFS_BLK_SIZE * 8U) + byte_idx * 8U + bit_idx;
+                unsigned int inode_idx = blk_idx * bits_per_bitmap + byte_idx * 8U + bit_idx;
                 if (inode_idx >= ctx.sp_blk.inode_num) {
                     break;
                 }
@@ -158,6 +178,7 @@ static int find_free_inode_indices(unsigned int *allocated_inode_idx, unsigned i
         ret = MOFS_ENOSPC;
     }
 
+    mofs_free(bitmap_buf);
     return ret;
 }
 
@@ -264,21 +285,22 @@ int mofs_read_inode(int inode_num, mofs_inode_t *inode)
     size_t       fraction     = 0;
     void        *buf          = NULL;
     void        *inode_ptr    = NULL;
+    uint32_t     bb           = ctx.sp_blk.blk_size;
 
     if ((inode_num < 0) || (ctx.sp_blk.inode_num <= inode_num) || (inode == NULL)) {
         ret = MOFS_EINVAL;
     }
 
     if (ret == 0) {
-        buf = mofs_malloc(MOFS_BLK_SIZE);
+        buf = mofs_malloc((size_t)bb);
         if (buf == NULL) {
             ret = get_errno();
         }
     }
 
     blk_offset = ctx.sp_blk.inode_table_start;
-    blk_offset += (inode_num * sizeof(mofs_inode_t)) / MOFS_BLK_SIZE;
-    inode_offset = (inode_num * sizeof(mofs_inode_t)) % MOFS_BLK_SIZE;
+    blk_offset += (inode_num * (int)sizeof(mofs_inode_t)) / (int)bb;
+    inode_offset = (inode_num * (int)sizeof(mofs_inode_t)) % (int)bb;
 
     if (ret == 0) {
         ret = read_continuous_blocks(ctx.dev_fd, buf, 1, blk_offset, &read_blk_num, &fraction);
@@ -324,13 +346,14 @@ int mofs_write_inode(int inode_num, const mofs_inode_t *inode)
     unsigned int read_blk_num    = 0;
     size_t       fraction        = 0;
     void        *blk_buf         = NULL;
+    uint32_t     bb              = ctx.sp_blk.blk_size;
 
     if ((inode_num < 0) || (ctx.sp_blk.inode_num <= inode_num) || (inode == NULL)) {
         ret = MOFS_EINVAL;
     }
 
     if (ret == 0) {
-        blk_buf = mofs_malloc(MOFS_BLK_SIZE);
+        blk_buf = mofs_malloc((size_t)bb);
         if (blk_buf == NULL) {
             ret = get_errno();
         }
@@ -339,8 +362,8 @@ int mofs_write_inode(int inode_num, const mofs_inode_t *inode)
     /* Copy inode to block buffer */
     if (ret == 0) {
         blk_offset = ctx.sp_blk.inode_table_start;
-        blk_offset += (inode_num * sizeof(mofs_inode_t)) / MOFS_BLK_SIZE;
-        inode_offset = (inode_num * sizeof(mofs_inode_t)) % MOFS_BLK_SIZE;
+        blk_offset += (inode_num * (int)sizeof(mofs_inode_t)) / (int)bb;
+        inode_offset = (inode_num * (int)sizeof(mofs_inode_t)) % (int)bb;
 
         ret = read_continuous_blocks(ctx.dev_fd, blk_buf, 1, blk_offset, &read_blk_num, &fraction);
         if (ret != 0) {

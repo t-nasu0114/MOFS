@@ -72,12 +72,12 @@ int read_file_data_block(int inode_num, void *buf, unsigned int start_blk_num, u
     if (ret == 0) {
         ret = mofs_read_inode(inode_num, &inode_buf);
         if (ret == 0) {
-            if (((inode_buf.i_size + MOFS_BLK_SIZE - 1) / MOFS_BLK_SIZE) <= start_blk_num) {
+            if (((inode_buf.i_size + ctx.sp_blk.blk_size - 1) / ctx.sp_blk.blk_size) <= start_blk_num) {
                 /* exceed file size limit */
                 ret = MOFS_EINVAL;
-            } else if (start_blk_num + req_blk_num > (inode_buf.i_size + MOFS_BLK_SIZE - 1) / MOFS_BLK_SIZE) {
+            } else if (start_blk_num + req_blk_num > (inode_buf.i_size + ctx.sp_blk.blk_size - 1) / ctx.sp_blk.blk_size) {
                 /* trim request block number to fit file size */
-                req_blk_num = (inode_buf.i_size + MOFS_BLK_SIZE - 1) / MOFS_BLK_SIZE - start_blk_num;
+                req_blk_num = (inode_buf.i_size + ctx.sp_blk.blk_size - 1) / ctx.sp_blk.blk_size - start_blk_num;
             }
         }
     }
@@ -105,12 +105,12 @@ int read_file_data_block(int inode_num, void *buf, unsigned int start_blk_num, u
             }
 
             *read_blk_num = *read_blk_num + 1U;
-            buf           = (char *)buf + MOFS_BLK_SIZE;
+            buf           = (char *)buf + ctx.sp_blk.blk_size;
         }
 
         if ((ret == 0) && ((*fraction) == 0U)) {
-            if (inode_buf.i_size / MOFS_BLK_SIZE < start_blk_num + *read_blk_num) {
-                (*fraction) = inode_buf.i_size % MOFS_BLK_SIZE;
+            if (inode_buf.i_size / ctx.sp_blk.blk_size < start_blk_num + *read_blk_num) {
+                (*fraction) = inode_buf.i_size % ctx.sp_blk.blk_size;
                 (*read_blk_num) -= 1;
             }
         }
@@ -208,7 +208,7 @@ int write_file_data_block(int inode_num, const void *buf, unsigned int start_blk
             }
 
             *written_blk_num = *written_blk_num + 1U;
-            buf              = (char *)buf + MOFS_BLK_SIZE;
+            buf              = (char *)buf + ctx.sp_blk.blk_size;
         }
     }
 
@@ -355,7 +355,7 @@ int mofs_unlink_core(const char *path)
         return ret;
     }
 
-    used_blk_num = (target_inode.i_size + MOFS_BLK_SIZE - 1U) / MOFS_BLK_SIZE;
+    used_blk_num = (target_inode.i_size + ctx.sp_blk.blk_size - 1U) / ctx.sp_blk.blk_size;
     if (used_blk_num > 0U) {
         ret = free_data_block(target_inode_num, 0U, used_blk_num);
         if (ret != 0) {
@@ -694,26 +694,26 @@ int mofs_read_core(mofs_filehandle_t **handle, void *buf, size_t size, off_t *of
     }
 
     /* start reading */
-    req_blk_num = (((*offset % MOFS_BLK_SIZE) + size) + MOFS_BLK_SIZE - 1) / MOFS_BLK_SIZE;
-    buf_tmp     = mofs_malloc(req_blk_num * MOFS_BLK_SIZE);
+    req_blk_num = (((*offset % ctx.sp_blk.blk_size) + size) + ctx.sp_blk.blk_size - 1) / ctx.sp_blk.blk_size;
+    buf_tmp     = mofs_malloc(req_blk_num * ctx.sp_blk.blk_size);
     if (buf_tmp == NULL) {
         ret = get_errno();
         goto out;
     }
-    ret = read_file_data_block((*handle)->inode_num, buf_tmp, (*offset) / MOFS_BLK_SIZE, req_blk_num, &read_blk_num,
+    ret = read_file_data_block((*handle)->inode_num, buf_tmp, (*offset) / ctx.sp_blk.blk_size, req_blk_num, &read_blk_num,
                                &fraction);
     if (ret != 0) {
         goto out;
     } else {
-        if (((read_blk_num * MOFS_BLK_SIZE) + fraction) < ((*offset) % MOFS_BLK_SIZE)) {
+        if (((read_blk_num * ctx.sp_blk.blk_size) + fraction) < ((*offset) % ctx.sp_blk.blk_size)) {
             (*read_size) = 0;
         } else {
-            (*read_size) = (read_blk_num * MOFS_BLK_SIZE) + fraction - ((*offset) % MOFS_BLK_SIZE);
+            (*read_size) = (read_blk_num * ctx.sp_blk.blk_size) + fraction - ((*offset) % ctx.sp_blk.blk_size);
         }
         if ((*read_size) > size) {
             (*read_size) = size;
         }
-        mofs_memcpy(buf, (char *)buf_tmp + ((*offset) % MOFS_BLK_SIZE), (*read_size));
+        mofs_memcpy(buf, (char *)buf_tmp + ((*offset) % ctx.sp_blk.blk_size), (*read_size));
         if (update_offset) {
             (*handle)->file_offset = (unsigned int)(*offset + (off_t)(*read_size));
         }
@@ -769,7 +769,7 @@ int mofs_write_core(mofs_filehandle_t **handle, const void *buf, size_t size, of
     size_t          total_write_size = 0U;
     size_t          write_pos_in_blk = 0U;
     uint32_t        old_size         = 0U;
-    uint64_t        max_file_size    = (uint64_t)MOFS_DATA_BLK_PER_FILE * (uint64_t)MOFS_BLK_SIZE;
+    uint64_t        max_file_size    = (uint64_t)MOFS_DATA_BLK_PER_FILE * (uint64_t)ctx.sp_blk.blk_size;
     uint64_t        write_end_offset = 0U;
     bool            alloc_done       = false;
     bool            write_started    = false;
@@ -825,11 +825,11 @@ int mofs_write_core(mofs_filehandle_t **handle, const void *buf, size_t size, of
         goto out;
     }
 
-    start_blk_num    = (unsigned int)((uint64_t)(*offset) / (uint64_t)MOFS_BLK_SIZE);
-    write_pos_in_blk = (size_t)((uint64_t)(*offset) % (uint64_t)MOFS_BLK_SIZE);
-    req_blk_num      = (unsigned int)((write_pos_in_blk + write_size_req + MOFS_BLK_SIZE - 1U) / MOFS_BLK_SIZE);
+    start_blk_num    = (unsigned int)((uint64_t)(*offset) / (uint64_t)ctx.sp_blk.blk_size);
+    write_pos_in_blk = (size_t)((uint64_t)(*offset) % (uint64_t)ctx.sp_blk.blk_size);
+    req_blk_num      = (unsigned int)((write_pos_in_blk + write_size_req + ctx.sp_blk.blk_size - 1U) / ctx.sp_blk.blk_size);
 
-    current_blk_num = (old_size + MOFS_BLK_SIZE - 1U) / MOFS_BLK_SIZE;
+    current_blk_num = (old_size + ctx.sp_blk.blk_size - 1U) / ctx.sp_blk.blk_size;
     if (start_blk_num + req_blk_num > current_blk_num) {
         required_blk_num = start_blk_num + req_blk_num - current_blk_num;
         alloc_start_blk  = current_blk_num;
@@ -844,15 +844,15 @@ int mofs_write_core(mofs_filehandle_t **handle, const void *buf, size_t size, of
         }
     }
 
-    buf_tmp = mofs_malloc((size_t)req_blk_num * MOFS_BLK_SIZE);
+    buf_tmp = mofs_malloc((size_t)req_blk_num * ctx.sp_blk.blk_size);
     if (buf_tmp == NULL) {
         ret = get_errno();
         goto out;
     }
-    mofs_memset(buf_tmp, 0, (size_t)req_blk_num * MOFS_BLK_SIZE);
+    mofs_memset(buf_tmp, 0, (size_t)req_blk_num * ctx.sp_blk.blk_size);
 
     /* preload existing file blocks for read-modify-write */
-    current_blk_num = (old_size + MOFS_BLK_SIZE - 1U) / MOFS_BLK_SIZE;
+    current_blk_num = (old_size + ctx.sp_blk.blk_size - 1U) / ctx.sp_blk.blk_size;
     for (unsigned int i = 0U; i < req_blk_num; i++) {
         unsigned int file_blk_num = start_blk_num + i;
         unsigned int abs_blk_num  = inode.i_data_blk[file_blk_num];
@@ -865,7 +865,7 @@ int mofs_write_core(mofs_filehandle_t **handle, const void *buf, size_t size, of
             goto out;
         }
 
-        ret = read_continuous_blocks(ctx.dev_fd, (char *)buf_tmp + (size_t)i * MOFS_BLK_SIZE, 1U, abs_blk_num,
+        ret = read_continuous_blocks(ctx.dev_fd, (char *)buf_tmp + (size_t)i * ctx.sp_blk.blk_size, 1U, abs_blk_num,
                                      &read_blk_num, &fraction);
         if (ret != 0) {
             goto out;
@@ -877,7 +877,7 @@ int mofs_write_core(mofs_filehandle_t **handle, const void *buf, size_t size, of
 
     /* zero-fill the gap between old EOF and write offset if needed */
     if ((uint64_t)old_size < (uint64_t)(*offset)) {
-        uint64_t start_off     = (uint64_t)start_blk_num * (uint64_t)MOFS_BLK_SIZE;
+        uint64_t start_off     = (uint64_t)start_blk_num * (uint64_t)ctx.sp_blk.blk_size;
         uint64_t zero_from_off = ((uint64_t)old_size > start_off) ? (uint64_t)old_size : start_off;
         uint64_t zero_to_off   = (uint64_t)(*offset);
         if (zero_to_off > zero_from_off) {
@@ -895,7 +895,7 @@ int mofs_write_core(mofs_filehandle_t **handle, const void *buf, size_t size, of
         goto out;
     }
 
-    total_write_size = (size_t)written_blk_num * MOFS_BLK_SIZE + fraction;
+    total_write_size = (size_t)written_blk_num * ctx.sp_blk.blk_size + fraction;
     if (total_write_size < write_pos_in_blk) {
         *written_size = 0U;
     } else {
