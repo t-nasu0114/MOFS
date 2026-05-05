@@ -7,6 +7,9 @@
  *******************************************************/
 
 #include <mofs_errno.h>
+#include <mofs_format.h>
+#include <mofs_lifecycle.h>
+#include <mofs_posix.h>
 #include <mofs_type.h>
 
 /*******************************************************
@@ -16,7 +19,11 @@
 /* MOFS */
 #define MOFS_MAGIC_NUM 0x53464F4DU /* MOFS in ASCII little endian*/
 
-/* Logical block size: default when `mofs_format(..., blk_size)` passes -1 */
+/* Logical block size:
+ * - Default when `mofs_format(..., blk_size)` passes -1.
+ * - Validates against MOFS_BLK_SIZE_MIN and MOFS_BLK_SIZE_MAX.
+ * - Power-of-two check: valid values have a single set bit (512 * (2 ^ n)).
+ */
 #define MOFS_BLK_SIZE_DEFAULT 4096U
 #define MOFS_BLK_SIZE         MOFS_BLK_SIZE_DEFAULT
 #define MOFS_BLK_SIZE_MIN     512U
@@ -99,19 +106,6 @@ typedef struct mofs_inode
     uint32_t i_data_blk[MOFS_DATA_BLK_PER_FILE]; /* Absolute block number of data blocks */
 } mofs_inode_t;
 
-/* File status */
-typedef struct mofs_stat
-{
-    ino_t   st_ino;
-    mode_t  st_mode;
-    nlink_t st_nlink;
-    uid_t   st_uid;
-    gid_t   st_gid;
-    off_t   st_size;
-    /* Time info is not supported yet */
-    uint32_t st_blocks;
-} mofs_stat_t;
-
 /***************************
  * Context
  ****************************/
@@ -125,12 +119,5 @@ typedef struct mofs_ctx
 } mofs_ctx_t;
 
 extern mofs_ctx_t ctx;
-
-/*******************************************************
- * functions
- *******************************************************/
-
-int mofs_init_core(const char *path);
-int mofs_fini_core(void);
 
 #endif /* __MOFS_CORE__ */

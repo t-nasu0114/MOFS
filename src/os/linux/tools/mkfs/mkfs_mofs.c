@@ -1,5 +1,4 @@
 
-#include <mofs_core.h>
 #include <mofs_format.h>
 #include <mofs_util.h>
 #include <stdlib.h>
@@ -10,7 +9,8 @@ static void print_usage(const char *prog_name)
     MOFS_INF("Usage: %s [OPTIONS] DEVICE_FILE\n", prog_name);
     MOFS_INF("Options:\n");
     MOFS_INF("  -s, --size <NUM>   Specify file system size in blocks (default: auto)\n");
-    MOFS_INF("  -b, --block <NUM> Logical block size in bytes (-1 omit = %u)\n", (unsigned)MOFS_BLK_SIZE_DEFAULT);
+    MOFS_INF("  -b, --block <NUM> Logical block size in bytes (This value must be a (512 * (2 ^ n)) and between 512 "
+             "and 65536)\n");
     MOFS_INF("  -h, --help         Display this help message\n");
 }
 

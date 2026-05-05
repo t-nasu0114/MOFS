@@ -3,6 +3,7 @@
     2. APIs in this file returns error codes defined in POSIX standard.
 */
 #include <errno.h>
+#include <mofs_core.h>
 #include <mofs_dir.h>
 #include <mofs_errno.h>
 #include <mofs_file.h>
@@ -182,26 +183,11 @@ int mofs_close(mofs_filehandle_t *handle)
  */
 int mofs_read(mofs_filehandle_t *handle, void *buf, size_t size)
 {
-    int    err       = 0;
-    int    ret       = 0;
-    off_t  offset    = 0;
-    size_t read_size = 0;
-
     if (handle == NULL) {
         errno = EINVAL;
         return -1;
     }
-
-    offset = (off_t)handle->file_offset;
-    err    = mofs_read_core(&handle, buf, size, &offset, &read_size, true);
-    if (err != 0) {
-        errno = mofs_to_os_errno(err);
-        ret   = -1;
-    } else {
-        ret = (int)read_size;
-    }
-
-    return ret;
+    return mofs_pread(handle, buf, size, (off_t)(handle->file_offset));
 }
 
 /**
@@ -221,18 +207,81 @@ int mofs_read(mofs_filehandle_t *handle, void *buf, size_t size)
  */
 int mofs_write(mofs_filehandle_t *handle, const void *buf, size_t size)
 {
-    int    err          = 0;
-    int    ret          = 0;
-    off_t  offset       = 0;
-    size_t written_size = 0;
-
     if (handle == NULL) {
         errno = EINVAL;
         return -1;
     }
+    return mofs_pwrite(handle, buf, size, (off_t)(handle->file_offset));
+}
 
-    offset = (off_t)handle->file_offset;
-    err    = mofs_write_core(&handle, buf, size, &offset, &written_size, true);
+/**
+ * @brief Read file data in POSIX layer with explicit offset.
+ *
+ * Function behavior:
+ * - Validates handle and offset arguments before read dispatch.
+ * - Calls `mofs_read_core()` and requests offset update on success.
+ * - Converts MOFS error code to OS errno on failure.
+ *
+ * @param[in] handle Opened file handle.
+ * @param[out] buf Destination buffer for read data.
+ * @param[in] size Maximum number of bytes to read.
+ * @param[in] offset Read offset in bytes.
+ * @return Number of bytes read on success.
+ * @return -1 on failure (with `errno` updated).
+ */
+int mofs_pread(mofs_filehandle_t *handle, void *buf, size_t size, off_t offset)
+{
+    int    err          = 0;
+    int    ret          = 0;
+    off_t  read_offset  = offset;
+    off_t  max_offset   = (off_t)UINT32_MAX;
+    size_t read_size    = 0;
+
+    if ((handle == NULL) || (offset < 0) || (offset > max_offset)) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    err = mofs_read_core(&handle, buf, size, &read_offset, &read_size, true);
+    if (err != 0) {
+        errno = mofs_to_os_errno(err);
+        ret   = -1;
+    } else {
+        ret = (int)read_size;
+    }
+
+    return ret;
+}
+
+/**
+ * @brief Write file data in POSIX layer with explicit offset.
+ *
+ * Function behavior:
+ * - Validates handle and offset arguments before write dispatch.
+ * - Calls `mofs_write_core()` and requests offset update on success.
+ * - Converts MOFS error code to OS errno on failure.
+ *
+ * @param[in] handle Opened file handle.
+ * @param[in] buf Source buffer containing bytes to write.
+ * @param[in] size Number of bytes requested to write.
+ * @param[in] offset Write offset in bytes.
+ * @return Number of bytes written on success.
+ * @return -1 on failure (with `errno` updated).
+ */
+int mofs_pwrite(mofs_filehandle_t *handle, const void *buf, size_t size, off_t offset)
+{
+    int    err          = 0;
+    int    ret          = 0;
+    off_t  write_offset = offset;
+    off_t  max_offset   = (off_t)UINT32_MAX;
+    size_t written_size = 0;
+
+    if ((handle == NULL) || (offset < 0) || (offset > max_offset)) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    err = mofs_write_core(&handle, buf, size, &write_offset, &written_size, true);
     if (err != 0) {
         errno = mofs_to_os_errno(err);
         ret   = -1;

@@ -1,21 +1,10 @@
 #ifndef __MOFS_POSIX__
 #define __MOFS_POSIX__
 
-#include <mofs_core.h>
-#include <mofs_dir.h>
-#include <mofs_file.h>
-
-/* Functions Declarations */
-int                mofs_stat(const char *path, mofs_stat_t *stbuf);
-mofs_dirhandle_t  *mofs_opendir(const char *path);
-int                mofs_closedir(mofs_dirhandle_t *handle);
-mofs_dirent_t     *mofs_readdir(mofs_dirhandle_t *handle);
-mofs_filehandle_t *mofs_open(const char *path, int flags, mode_t mode);
-int                mofs_close(mofs_filehandle_t *handle);
-int                mofs_read(mofs_filehandle_t *handle, void *buf, size_t size);
-int                mofs_write(mofs_filehandle_t *handle, const void *buf, size_t size);
-int                mofs_unlink(const char *path);
-int                mofs_mkdir(const char *path, mode_t mode);
-int                mofs_rmdir(const char *path);
+#include <posix/dirent.h>
+#include <posix/fcntl.h>
+#include <posix/limits.h>
+#include <posix/sys/stat.h>
+#include <posix/unistd.h>
 
 #endif /* __MOFS_POSIX__ */

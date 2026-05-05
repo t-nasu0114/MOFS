@@ -7,6 +7,7 @@
 #include <mofs_inode.h>
 #include <mofs_mem.h>
 #include <mofs_posix.h>
+#include <mofs_path.h>
 #include <mofs_str.h>
 #include <mofs_type.h>
 #include <mofs_util.h>
@@ -32,12 +33,13 @@ mofs_ctx_t ctx = {.init = false, .dev_path = NULL, .dev_fd = 0};
  *         - MOFS_EIO: superblock magic mismatch (for example, unformatted
  *           device).
  */
-int mofs_init_core(const char *path)
+int mofs_init_core(const char *path, bool update_root_owner, uint32_t root_uid, uint32_t root_gid)
 {
     int                ret = 0;
     int                nr  = 0;
     mofs_superblock_t  sb_scratch;
     unsigned long long vol_bytes = 0;
+    mofs_inode_t       root_inode;
 
     mofs_memset(&sb_scratch, 0, sizeof(sb_scratch));
 
@@ -109,6 +111,20 @@ int mofs_init_core(const char *path)
 
     /* Mark as initalized */
     ctx.init = true;
+
+    if (update_root_owner == true) {
+        ret = mofs_read_inode(MOFS_ROOT_INODE_NUM, &root_inode);
+        if (ret != 0) {
+            goto out3;
+        }
+        root_inode.i_uid = root_uid;
+        root_inode.i_gid = root_gid;
+        ret              = mofs_write_inode(MOFS_ROOT_INODE_NUM, &root_inode);
+        if (ret != 0) {
+            goto out3;
+        }
+    }
+
     return 0;
 
 out3:

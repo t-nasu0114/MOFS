@@ -26,7 +26,7 @@ static void test_TC_P1_001_init_core_success(void **state)
     ret = mofs_format(image_path, 0, MOFS_BLK_SIZE);
     assert_int_equal(ret, 0);
 
-    ret = mofs_init_core(image_path);
+    ret = mofs_init_core(image_path, false, 0U, 0U);
     assert_int_equal(ret, 0);
 
     assert_int_equal(mofs_fini_core(), 0);
@@ -39,7 +39,7 @@ static void test_TC_P1_002_init_core_missing_device(void **state)
     int ret = 0;
 
     (void)state;
-    ret = mofs_init_core("/tmp/path_that_should_not_exist_mofs");
+    ret = mofs_init_core("/tmp/path_that_should_not_exist_mofs", false, 0U, 0U);
     assert_true(ret != 0);
 }
 
@@ -53,7 +53,7 @@ static void test_TC_P1_003_init_core_magic_mismatch(void **state)
     ret = mofs_test_create_temp_image(image_path, sizeof(image_path), 2U * 1024U * 1024U);
     assert_int_equal(ret, 0);
 
-    ret = mofs_init_core(image_path);
+    ret = mofs_init_core(image_path, false, 0U, 0U);
     assert_int_equal(ret, MOFS_EIO);
     assert_int_equal(mofs_test_remove_file(image_path), 0);
 }
@@ -70,7 +70,7 @@ static void test_TC_P1_004_fini_core_returns_zero(void **state)
     ret = mofs_format(image_path, 0, MOFS_BLK_SIZE);
     assert_int_equal(ret, 0);
 
-    ret = mofs_init_core(image_path);
+    ret = mofs_init_core(image_path, false, 0U, 0U);
     assert_int_equal(ret, 0);
 
     ret = mofs_fini_core();
@@ -91,7 +91,7 @@ static void test_TC_P1_005_stat_success(void **state)
     ret = mofs_format(image_path, 0, MOFS_BLK_SIZE);
     assert_int_equal(ret, 0);
 
-    ret = mofs_init_core(image_path);
+    ret = mofs_init_core(image_path, false, 0U, 0U);
     assert_int_equal(ret, 0);
 
     errno = 0;
