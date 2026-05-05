@@ -2,13 +2,11 @@
 #include <mofs_core.h>
 #include <mofs_devio.h>
 #include <mofs_errno.h>
+#include <mofs_format.h>
 #include <mofs_util.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
-
-/* TODO: This extern will be deleted */
-extern int mofs_format(const char *device_file, int fs_size, int blk_size);
 
 static void print_usage(const char *prog_name)
 {
