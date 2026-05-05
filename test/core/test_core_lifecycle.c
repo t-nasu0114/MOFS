@@ -3,9 +3,11 @@
 #include <setjmp.h>
 
 #include <cmocka.h>
+#include <errno.h>
 #include <mofs_core.h>
 #include <mofs_errno.h>
 #include <mofs_file.h>
+#include <mofs_posix.h>
 
 #include "../fixtures/test_fixture.h"
 
@@ -76,8 +78,8 @@ static void test_TC_P1_004_fini_core_returns_zero(void **state)
     assert_int_equal(mofs_test_remove_file(image_path), 0);
 }
 
-/* TC-P1-005: stat_core returns valid root inode information. */
-static void test_TC_P1_005_stat_core_success(void **state)
+/* TC-P1-005: mofs_stat returns valid root inode information. */
+static void test_TC_P1_005_stat_success(void **state)
 {
     char        image_path[128] = {0};
     int         ret             = 0;
@@ -92,8 +94,10 @@ static void test_TC_P1_005_stat_core_success(void **state)
     ret = mofs_init_core(image_path);
     assert_int_equal(ret, 0);
 
-    ret = mofs_stat_core("/", &stbuf);
+    errno = 0;
+    ret   = mofs_stat("/", &stbuf);
     assert_int_equal(ret, 0);
+    assert_int_equal(errno, 0);
     assert_int_equal((int)stbuf.st_ino, 2);
     assert_true((stbuf.st_mode & MOFS_FTYPE_DIR) != 0U);
 
@@ -101,25 +105,29 @@ static void test_TC_P1_005_stat_core_success(void **state)
     assert_int_equal(mofs_test_remove_file(image_path), 0);
 }
 
-/* TC-P1-006: stat_core rejects NULL path. */
-static void test_TC_P1_006_stat_core_null_path(void **state)
+/* TC-P1-006: mofs_stat rejects NULL path. */
+static void test_TC_P1_006_stat_null_path(void **state)
 {
     int         ret   = 0;
     mofs_stat_t stbuf = {0};
 
     (void)state;
-    ret = mofs_stat_core(NULL, &stbuf);
-    assert_int_equal(ret, MOFS_EINVAL);
+    errno = 0;
+    ret   = mofs_stat(NULL, &stbuf);
+    assert_int_equal(ret, -1);
+    assert_int_equal(errno, EINVAL);
 }
 
-/* TC-P1-007: stat_core rejects NULL output buffer. */
-static void test_TC_P1_007_stat_core_null_stbuf(void **state)
+/* TC-P1-007: mofs_stat rejects NULL output buffer. */
+static void test_TC_P1_007_stat_null_stbuf(void **state)
 {
     int ret = 0;
 
     (void)state;
-    ret = mofs_stat_core("/", NULL);
-    assert_int_equal(ret, MOFS_EINVAL);
+    errno = 0;
+    ret   = mofs_stat("/", NULL);
+    assert_int_equal(ret, -1);
+    assert_int_equal(errno, EINVAL);
 }
 
 int main(void)
@@ -129,9 +137,9 @@ int main(void)
         cmocka_unit_test(test_TC_P1_002_init_core_missing_device),
         cmocka_unit_test(test_TC_P1_003_init_core_magic_mismatch),
         cmocka_unit_test(test_TC_P1_004_fini_core_returns_zero),
-        cmocka_unit_test(test_TC_P1_005_stat_core_success),
-        cmocka_unit_test(test_TC_P1_006_stat_core_null_path),
-        cmocka_unit_test(test_TC_P1_007_stat_core_null_stbuf),
+        cmocka_unit_test(test_TC_P1_005_stat_success),
+        cmocka_unit_test(test_TC_P1_006_stat_null_path),
+        cmocka_unit_test(test_TC_P1_007_stat_null_stbuf),
     };
 
     return cmocka_run_group_tests(tests, NULL, NULL);

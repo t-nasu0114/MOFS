@@ -114,6 +114,5 @@ extern mofs_ctx_t ctx;
 
 int mofs_init_core(const char *path);
 int mofs_fini_core(void);
-int mofs_stat_core(const char *path, mofs_stat_t *stbuf);
 
 #endif /* __MOFS_CORE__ */

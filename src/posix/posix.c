@@ -5,10 +5,31 @@
 #include <errno.h>
 #include <mofs_dir.h>
 #include <mofs_errno.h>
+#include <mofs_file.h>
 #include <mofs_posix.h>
 
-int mofs_fstat(int fd, mofs_stat_t *stbuf)
+/**
+ * @brief Retrieve file status for a path in POSIX layer.
+ *
+ * Function behavior:
+ * - Calls `mofs_stat_core()` to resolve the path and populate inode metadata.
+ * - On failure, converts MOFS errno to OS errno and updates `errno`.
+ *
+ * @param[in] path NULL-terminated path string.
+ * @param[out] stbuf Destination buffer for status fields.
+ * @return 0 on success.
+ * @return -1 on failure (with `errno` updated).
+ */
+int mofs_stat(const char *path, mofs_stat_t *stbuf)
 {
+    int err = 0;
+
+    err = mofs_stat_core(path, stbuf);
+    if (err != 0) {
+        errno = mofs_to_os_errno(err);
+        return -1;
+    }
+
     return 0;
 }
 

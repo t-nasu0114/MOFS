@@ -194,7 +194,7 @@ void mofs_destroy_fuse(void *private_data)
  *
  * Function behavior:
  * - Supports root path lookup (`/` and `/.`).
- * - Resolves inode number and reads inode metadata from MOFS.
+ * - Obtains inode metadata via `mofs_stat()` (POSIX layer).
  * - Fills `struct stat` and converts MOFS errors to OS errno values.
  *
  * @param[in] path Target path string.
@@ -212,7 +212,7 @@ int mofs_getattr_fuse(const char *path, struct stat *stbuf, struct fuse_file_inf
     mofs_fuse_bind_request_caller();
     memset(stbuf, 0, sizeof(struct stat));
 
-    ret = mofs_stat_core(path, &stat);
+    ret = mofs_stat(path, &stat);
     if (ret == 0) {
         stbuf->st_ino   = stat.st_ino;
         stbuf->st_nlink = stat.st_nlink;
@@ -220,8 +220,9 @@ int mofs_getattr_fuse(const char *path, struct stat *stbuf, struct fuse_file_inf
         stbuf->st_mode  = stat.st_mode;
         stbuf->st_uid   = stat.st_uid;
         stbuf->st_gid   = stat.st_gid;
+        return 0;
     }
-    return -(mofs_to_os_errno(ret));
+    return -errno;
 }
 
 /**
