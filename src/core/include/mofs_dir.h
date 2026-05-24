@@ -6,7 +6,7 @@
  *******************************************************/
 
 #include <mofs_file.h>
-#include <mofs_type.h>
+#include <mofs_posix.h>
 
 /*******************************************************
  * macros
@@ -19,21 +19,14 @@
  * structs
  *******************************************************/
 
-/* Directory Entry */
-typedef struct mofs_dirent
-{
-    char     name[MOFS_FILENAME_LEN];
-    uint32_t inode_num;
-} mofs_dirent_t;
-
 /* Directory handle */
-typedef struct mofs_dirhandle
+struct mofs_dirhandle
 {
     bool          used;
     int           inode_num;
     unsigned int  dirent_offset;
     mofs_dirent_t dirent_buf;
-} mofs_dirhandle_t;
+};
 
 /* Directory handle pool */
 extern mofs_dirhandle_t dirhandle_pool[MOFS_DIRHANDLE_POOL_SIZE];

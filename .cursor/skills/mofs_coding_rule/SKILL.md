@@ -38,7 +38,7 @@ MOFS の実装を行うときに使います。
 
 ### 2.5 ブロック I/O とレイアウト定数
 
-- 論理ブロックサイズは `MOFS_BLK_SIZE`（4096）に合わせ、連続ブロックの読み書きは `read_continuous_blocks` / `write_continuous_blocks` など util 層の関数を経由する流れになっている。
+- 論理ブロックサイズはオンディスクのスーパーブロックおよび `ctx.sp_blk.blk_size` が真実であり、既定のフォーマット引数のみ `MOFS_BLK_SIZE_DEFAULT`（4096、`MOFS_BLK_SIZE` と同値）である。連続ブロックの読み書きは `read_continuous_blocks` / `write_continuous_blocks` 経由。
 
 ### 2.6 メモリ
 
@@ -77,6 +77,6 @@ MOFS の実装を行うときに使います。
 - `struct fuse_operations op` をグローバルで定義し、`fuse_main` に渡す。
 - 実行ファイル名を Usage 表示に使う `SELF_NAME` は、CMake の `target_compile_definitions` でビルド時に定義されている。
 
-### 3.4 `src/proc/linux/mkfs`（mkfs ツール）
+### 3.4 `src/os/linux/tools/mkfs`（mkfs ツール）
 
-- `mofs_format` をヘッダではなく `extern` で宣言して呼び出している。フォーマット時のブロックサイズ検証には `MOFS_BLK_SIZE` しか受け付けないメッセージがある。
+- `-b` で論理ブロックサイズを渡し `mofs_format` に伝える（`-1`/省略時はデフォルト 4096 バイト）。非対応サイズは `mofs_validate_logical_blk_size` で拒否される。

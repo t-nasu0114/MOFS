@@ -61,11 +61,11 @@ static int write_dot_entries(int child_inode_num, int parent_inode_num)
     unsigned int   written_blk_num = 0U;
     size_t         fraction        = 0U;
 
-    blk_buf = (mofs_dirent_t *)mofs_malloc(MOFS_BLK_SIZE);
+    blk_buf = (mofs_dirent_t *)mofs_malloc(ctx.sp_blk.blk_size);
     if (blk_buf == NULL) {
         return get_errno();
     }
-    mofs_memset(blk_buf, 0, MOFS_BLK_SIZE);
+    mofs_memset(blk_buf, 0, ctx.sp_blk.blk_size);
 
     mofs_strcpy(blk_buf[0].name, ".");
     blk_buf[0].inode_num = (uint32_t)child_inode_num;
@@ -117,12 +117,12 @@ static int is_directory_empty(int inode_num, bool *is_empty)
         return MOFS_ENOTDIR;
     }
 
-    buf = (mofs_dirent_t *)mofs_malloc(MOFS_BLK_SIZE);
+    buf = (mofs_dirent_t *)mofs_malloc(ctx.sp_blk.blk_size);
     if (buf == NULL) {
         return get_errno();
     }
 
-    dir_blk_num = (inode.i_size + MOFS_BLK_SIZE - 1U) / MOFS_BLK_SIZE;
+    dir_blk_num = (inode.i_size + ctx.sp_blk.blk_size - 1U) / ctx.sp_blk.blk_size;
     for (unsigned int blk_idx = 0U; blk_idx < dir_blk_num; blk_idx++) {
         unsigned int dirent_num = 0U;
         ret = read_file_data_block(inode_num, buf, blk_idx, 1U, &read_blk_num, &fraction);
@@ -137,7 +137,7 @@ static int is_directory_empty(int inode_num, bool *is_empty)
         if (fraction != 0U) {
             dirent_num = (unsigned int)(fraction / sizeof(mofs_dirent_t));
         } else {
-            dirent_num = MOFS_BLK_SIZE / sizeof(mofs_dirent_t);
+            dirent_num = ctx.sp_blk.blk_size / sizeof(mofs_dirent_t);
         }
 
         for (unsigned int dir_idx = 0U; dir_idx < dirent_num; dir_idx++) {
@@ -191,7 +191,7 @@ int find_dir_entry(char *component, int parent_inode_num, int *child_inode_num)
         goto out1;
     }
 
-    if ((buf = mofs_malloc(MOFS_BLK_SIZE)) == NULL) {
+    if ((buf = mofs_malloc(ctx.sp_blk.blk_size)) == NULL) {
         ret = get_errno();
         goto out1;
     }
@@ -201,7 +201,7 @@ int find_dir_entry(char *component, int parent_inode_num, int *child_inode_num)
         goto out2;
     }
 
-    parent_blk_num = (inode_buf.i_size + MOFS_BLK_SIZE - 1) / MOFS_BLK_SIZE;
+    parent_blk_num = (inode_buf.i_size + ctx.sp_blk.blk_size - 1) / ctx.sp_blk.blk_size;
 
     for (int i = 0; i < parent_blk_num; i++) {
         ret = read_file_data_block(parent_inode_num, buf, i, 1, &read_blk_num, &fraction);
@@ -214,7 +214,7 @@ int find_dir_entry(char *component, int parent_inode_num, int *child_inode_num)
             if (fraction != 0) {
                 dirent_num = fraction / sizeof(mofs_dirent_t);
             } else {
-                dirent_num = MOFS_BLK_SIZE / sizeof(mofs_dirent_t);
+                dirent_num = ctx.sp_blk.blk_size / sizeof(mofs_dirent_t);
             }
 
             for (int j = 0; j < dirent_num; j++) {
@@ -223,7 +223,6 @@ int find_dir_entry(char *component, int parent_inode_num, int *child_inode_num)
                     found            = true;
                     break;
                 }
-                dirent++;
             }
 
             if (found == true) {
@@ -277,7 +276,7 @@ int remove_dir_entry(const char *component, int parent_inode_num)
         return MOFS_EINVAL;
     }
 
-    buf = mofs_malloc(MOFS_BLK_SIZE);
+    buf = mofs_malloc(ctx.sp_blk.blk_size);
     if (buf == NULL) {
         return get_errno();
     }
@@ -292,7 +291,7 @@ int remove_dir_entry(const char *component, int parent_inode_num)
     }
 
     /* Scan parent directory blocks and tombstone the first matched entry. */
-    parent_blk_num = (parent_inode.i_size + MOFS_BLK_SIZE - 1U) / MOFS_BLK_SIZE;
+    parent_blk_num = (parent_inode.i_size + ctx.sp_blk.blk_size - 1U) / ctx.sp_blk.blk_size;
     for (int blk_idx = 0; blk_idx < parent_blk_num; blk_idx++) {
         unsigned int dirent_num = 0U;
 
@@ -309,7 +308,7 @@ int remove_dir_entry(const char *component, int parent_inode_num)
         if (fraction != 0U) {
             dirent_num = (unsigned int)(fraction / sizeof(mofs_dirent_t));
         } else {
-            dirent_num = MOFS_BLK_SIZE / sizeof(mofs_dirent_t);
+            dirent_num = ctx.sp_blk.blk_size / sizeof(mofs_dirent_t);
         }
         /* Find target name and clear the slot as tombstone. */
         for (unsigned int dir_idx = 0U; dir_idx < dirent_num; dir_idx++) {
@@ -377,13 +376,13 @@ int add_dir_entry(const char *component, int parent_inode_num, int child_inode_n
     bool           found_reusable   = false;
     bool           allocated_newblk = false;
     unsigned int   reusable_idx     = 0U;
-    unsigned int   entries_per_blk  = MOFS_BLK_SIZE / sizeof(mofs_dirent_t);
+    unsigned int   entries_per_blk  = ctx.sp_blk.blk_size / sizeof(mofs_dirent_t);
     unsigned int   append_entry_idx = 0U;
     unsigned int   target_entry_idx = 0U;
     unsigned int   target_blk_idx   = 0U;
     unsigned int   target_in_blk    = 0U;
     unsigned int   old_blk_num      = 0U;
-    unsigned int   max_entry_num    = MOFS_DATA_BLK_PER_FILE * (MOFS_BLK_SIZE / sizeof(mofs_dirent_t));
+    unsigned int   max_entry_num    = MOFS_DATA_BLK_PER_FILE * (ctx.sp_blk.blk_size / sizeof(mofs_dirent_t));
 
     if ((component == NULL) || (component[0] == '\0') || (parent_inode_num < 0) || (child_inode_num <= 0) ||
         (ctx.sp_blk.inode_num <= (unsigned int)child_inode_num)) {
@@ -394,7 +393,7 @@ int add_dir_entry(const char *component, int parent_inode_num, int child_inode_n
         return MOFS_EINVAL;
     }
 
-    dirent_buf = (mofs_dirent_t *)mofs_malloc(MOFS_BLK_SIZE);
+    dirent_buf = (mofs_dirent_t *)mofs_malloc(ctx.sp_blk.blk_size);
     if (dirent_buf == NULL) {
         return get_errno();
     }
@@ -413,7 +412,7 @@ int add_dir_entry(const char *component, int parent_inode_num, int child_inode_n
         goto out;
     }
 
-    old_blk_num      = (parent_inode.i_size + MOFS_BLK_SIZE - 1U) / MOFS_BLK_SIZE;
+    old_blk_num      = (parent_inode.i_size + ctx.sp_blk.blk_size - 1U) / ctx.sp_blk.blk_size;
     append_entry_idx = parent_inode.i_size / sizeof(mofs_dirent_t);
     if (append_entry_idx >= max_entry_num) {
         ret = MOFS_EFBIG;
@@ -471,7 +470,7 @@ int add_dir_entry(const char *component, int parent_inode_num, int child_inode_n
             goto out;
         }
         allocated_newblk = true;
-        mofs_memset(dirent_buf, 0, MOFS_BLK_SIZE);
+        mofs_memset(dirent_buf, 0, ctx.sp_blk.blk_size);
     } else {
         /* Reuse existing block that contains the chosen target slot. */
         ret = read_file_data_block(parent_inode_num, dirent_buf, target_blk_idx, 1U, &read_blk_num, &fraction);
@@ -620,7 +619,7 @@ int mofs_mkdir_core(const char *path, mode_t mode)
     if (ret != 0) {
         goto rollback;
     }
-    child_inode.i_size = MOFS_BLK_SIZE;
+    child_inode.i_size = ctx.sp_blk.blk_size;
     ret                = mofs_write_inode(child_inode_num, &child_inode);
     if (ret != 0) {
         goto rollback;
@@ -720,7 +719,7 @@ int mofs_rmdir_core(const char *path)
         return ret;
     }
 
-    used_blk_num = (target_inode.i_size + MOFS_BLK_SIZE - 1U) / MOFS_BLK_SIZE;
+    used_blk_num = (target_inode.i_size + ctx.sp_blk.blk_size - 1U) / ctx.sp_blk.blk_size;
     if (used_blk_num > 0U) {
         ret = free_data_block(path_info.leaf_inode_num, 0U, used_blk_num);
         if (ret != 0) {
@@ -867,7 +866,7 @@ int mofs_readdir_core(mofs_dirhandle_t **handle)
     }
 
     if (ret == 0) {
-        buf = (mofs_dirent_t *)mofs_malloc(MOFS_BLK_SIZE);
+        buf = (mofs_dirent_t *)mofs_malloc(ctx.sp_blk.blk_size);
         if (buf == NULL) {
             ret = get_errno();
         }
@@ -882,10 +881,10 @@ int mofs_readdir_core(mofs_dirhandle_t **handle)
                 /* Read the directory data block */
 
                 /* Calculate the start block and index */
-                start_block = (*handle)->dirent_offset / (MOFS_BLK_SIZE / sizeof(mofs_dirent_t));
-                start_idx   = (*handle)->dirent_offset % (MOFS_BLK_SIZE / sizeof(mofs_dirent_t));
+                start_block = (*handle)->dirent_offset / (ctx.sp_blk.blk_size / sizeof(mofs_dirent_t));
+                start_idx   = (*handle)->dirent_offset % (ctx.sp_blk.blk_size / sizeof(mofs_dirent_t));
 
-                for (; start_block < (inode.i_size + MOFS_BLK_SIZE - 1) / MOFS_BLK_SIZE; start_block++) {
+                for (; start_block < (inode.i_size + ctx.sp_blk.blk_size - 1) / ctx.sp_blk.blk_size; start_block++) {
                     /* Read the directory data block */
                     ret = read_file_data_block((*handle)->inode_num, buf, start_block, 1, &read_blk_num, &fraction);
 
@@ -894,7 +893,7 @@ int mofs_readdir_core(mofs_dirhandle_t **handle)
                         if (fraction != 0) {
                             entries_num = fraction / sizeof(mofs_dirent_t);
                         } else {
-                            entries_num = MOFS_BLK_SIZE / sizeof(mofs_dirent_t);
+                            entries_num = ctx.sp_blk.blk_size / sizeof(mofs_dirent_t);
                         }
 
                         for (; start_idx < entries_num; start_idx++) {
@@ -923,7 +922,7 @@ int mofs_readdir_core(mofs_dirhandle_t **handle)
     if (ret == 0) {
         if (found == true) {
             mofs_memcpy(&(*handle)->dirent_buf, &dirent_tmp, sizeof(mofs_dirent_t));
-            (*handle)->dirent_offset = start_block * (MOFS_BLK_SIZE / sizeof(mofs_dirent_t)) + start_idx + 1U;
+            (*handle)->dirent_offset = start_block * (ctx.sp_blk.blk_size / sizeof(mofs_dirent_t)) + start_idx + 1U;
         } else {
             /* EOF is not error.*/
             mofs_memset(&(*handle)->dirent_buf, 0, sizeof(mofs_dirent_t));

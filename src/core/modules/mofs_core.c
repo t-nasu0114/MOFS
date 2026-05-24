@@ -1,5 +1,4 @@
 
-#include "mofs_block.h"
 #include <mofs_core.h>
 #include <mofs_devio.h>
 #include <mofs_dir.h>
@@ -8,6 +7,7 @@
 #include <mofs_inode.h>
 #include <mofs_mem.h>
 #include <mofs_posix.h>
+#include <mofs_path.h>
 #include <mofs_str.h>
 #include <mofs_type.h>
 #include <mofs_util.h>
@@ -33,12 +33,15 @@ mofs_ctx_t ctx = {.init = false, .dev_path = NULL, .dev_fd = 0};
  *         - MOFS_EIO: superblock magic mismatch (for example, unformatted
  *           device).
  */
-int mofs_init_core(const char *path)
+int mofs_init_core(const char *path, bool update_root_owner, uint32_t root_uid, uint32_t root_gid)
 {
-    int          ret          = 0;
-    unsigned int read_blk_num = 0;
-    size_t       fraction     = 0;
-    void        *buf          = NULL;
+    int                ret = 0;
+    int                nr  = 0;
+    mofs_superblock_t  sb_scratch;
+    unsigned long long vol_bytes = 0;
+    mofs_inode_t       root_inode;
+
+    mofs_memset(&sb_scratch, 0, sizeof(sb_scratch));
 
     /* Open device */
     ctx.dev_path = mofs_malloc(mofs_strlen(path) + 1);
@@ -55,36 +58,44 @@ int mofs_init_core(const char *path)
         goto out2;
     }
 
-    /* Read superblock */
-    buf = mofs_malloc(MOFS_BLK_SIZE);
-    if (buf == NULL) {
+    /* Read superblock from block 0 (structure fits in first logical block). */
+    if (dev_lseek(ctx.dev_fd, 0, MOFS_SEEK_SET) < 0) {
         ret = get_errno();
         goto out3;
     }
 
-    ret = read_continuous_blocks(ctx.dev_fd, buf, 1, 0, &read_blk_num, &fraction);
-    if ((ret != 0) || (read_blk_num != 1)) {
-        ret = get_errno();
-        mofs_free(buf);
+    nr = dev_read(ctx.dev_fd, &sb_scratch, sizeof(sb_scratch));
+    if (nr != (int)sizeof(sb_scratch)) {
+        ret = MOFS_EIO;
+        MOFS_ERR("Superblock read failed");
         goto out3;
     }
 
-    if (((mofs_superblock_t *)buf)->magic != MOFS_MAGIC_NUM) {
+    if (sb_scratch.magic != MOFS_MAGIC_NUM) {
         ret = MOFS_EIO;
         MOFS_ERR("Device is not formatted");
         goto out3;
     }
 
-    ctx.sp_blk.magic              = ((mofs_superblock_t *)buf)->magic;
-    ctx.sp_blk.hole_blk_num       = ((mofs_superblock_t *)buf)->hole_blk_num;
-    ctx.sp_blk.inode_num          = ((mofs_superblock_t *)buf)->inode_num;
-    ctx.sp_blk.data_blk_num       = ((mofs_superblock_t *)buf)->data_blk_num;
-    ctx.sp_blk.inode_bitmap_start = ((mofs_superblock_t *)buf)->inode_bitmap_start;
-    ctx.sp_blk.data_bitmap_start  = ((mofs_superblock_t *)buf)->data_bitmap_start;
-    ctx.sp_blk.inode_table_start  = ((mofs_superblock_t *)buf)->inode_table_start;
-    ctx.sp_blk.data_region_start  = ((mofs_superblock_t *)buf)->data_region_start;
+    ret = mofs_validate_logical_blk_size(sb_scratch.blk_size);
+    if (ret != 0) {
+        MOFS_ERR("Invalid superblock block size");
+        goto out3;
+    }
 
-    mofs_free(buf);
+    vol_bytes = dev_get_size(ctx.dev_fd, &ret);
+    if (ret != 0) {
+        MOFS_ERR("Get device size error");
+        goto out3;
+    }
+    /* Device tail bytes smaller than one logical block are ignored. */
+    if ((vol_bytes / (unsigned long long)sb_scratch.blk_size) != (unsigned long long)sb_scratch.hole_blk_num) {
+        ret = MOFS_EINVAL;
+        MOFS_ERR("Superblock volume size mismatch");
+        goto out3;
+    }
+
+    ctx.sp_blk = sb_scratch;
 
     /* Initialize directory handle pool */
     mofs_memset(dirhandle_pool, 0, sizeof(dirhandle_pool));
@@ -100,6 +111,20 @@ int mofs_init_core(const char *path)
 
     /* Mark as initalized */
     ctx.init = true;
+
+    if (update_root_owner == true) {
+        ret = mofs_read_inode(MOFS_ROOT_INODE_NUM, &root_inode);
+        if (ret != 0) {
+            goto out3;
+        }
+        root_inode.i_uid = root_uid;
+        root_inode.i_gid = root_gid;
+        ret              = mofs_write_inode(MOFS_ROOT_INODE_NUM, &root_inode);
+        if (ret != 0) {
+            goto out3;
+        }
+    }
+
     return 0;
 
 out3:
@@ -133,51 +158,4 @@ int mofs_fini_core(void)
     ctx.dev_fd   = 0;
     ctx.init     = false;
     return 0;
-}
-
-/**
- * @brief Resolve a path and read its inode metadata.
- *
- * Function behavior:
- * - Validates input pointers.
- * - Resolves inode number from the specified path.
- * - Reads inode contents for the resolved inode number.
- *
- * @param[in] path NULL-terminated absolute path string.
- * @param[out] stbuf Destination pointer for resolved inode number.
- * @return 0 on success.
- * @return MOFS_EINVAL if any argument is invalid.
- * @return Non-zero error returned by `mofs_path_to_inode_num()` or `mofs_read_inode()`
- *         when lookup/read fails.
- */
-int mofs_stat_core(const char *path, mofs_stat_t *stbuf)
-{
-    int          ret       = 0;
-    int          inode_num = -1;
-    mofs_inode_t inode;
-
-    if ((path == NULL) || (stbuf == NULL)) {
-        ret = MOFS_EINVAL;
-    }
-
-    /* search inode number from path */
-    if (ret == 0) {
-        mofs_memset(stbuf, 0, sizeof(mofs_stat_t));
-        mofs_memset(&inode, 0, sizeof(mofs_inode_t));
-
-        ret = mofs_path_to_inode_num(path, &inode_num);
-        if (ret == 0) {
-            ret = mofs_read_inode(inode_num, &inode);
-            if (ret == 0) {
-                stbuf->st_ino   = inode_num;
-                stbuf->st_nlink = inode.i_links;
-                stbuf->st_size  = inode.i_size;
-                stbuf->st_mode  = inode.i_mode;
-                stbuf->st_uid   = inode.i_uid;
-                stbuf->st_gid   = inode.i_gid;
-            }
-        }
-    }
-
-    return ret;
 }

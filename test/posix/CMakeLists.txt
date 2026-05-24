@@ -20,11 +20,13 @@ mofs_add_cmocka_test(test_posix_dir_ops
         mofs_test_fixture
 )
 
-# POSIX-like miscellaneous behavior tests (currently fstat stub contract).
+# POSIX-like miscellaneous behavior tests (e.g. stat on mounted image).
 mofs_add_cmocka_test(test_posix_misc
     SOURCES test_posix_misc.c
     LINK_LIBS
         ${POSIX_API_LAYER_LIB_NAME}
         ${CORE_LIB_NAME}
+        ${CORE_FORMAT_LIB_NAME}
         ${OS_SERVICE_LIB_NAME}
+        mofs_test_fixture
 )

@@ -6,13 +6,12 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <fuse.h>
-#include <mofs_core.h>
 #include <mofs_errno.h>
-#include <mofs_inode.h>
-#include <mofs_path.h>
+#include <mofs_lifecycle.h>
 #include <mofs_posix.h>
 #include <mofs_user.h>
 #include <stdint.h>
+#include <sys/stat.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -99,8 +98,7 @@ static int build_mofs_open_args(int fuse_flags, mode_t requested_mode, bool forc
         flags |= MOFS_OFLAG_CREAT;
         context = fuse_get_context();
         if (out_mode == 0U) {
-            out_mode =
-                (mode_t)(MOFS_S_IRUSR | MOFS_S_IWUSR | MOFS_S_IRGRP | MOFS_S_IWGRP | MOFS_S_IROTH | MOFS_S_IWOTH);
+            out_mode = (mode_t)(S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
         }
         if (context != NULL) {
             out_mode = (mode_t)(out_mode & ~(context->umask));
@@ -132,7 +130,6 @@ static int build_mofs_open_args(int fuse_flags, mode_t requested_mode, bool forc
 void *mofs_init_fuse(struct fuse_conn_info *conn, struct fuse_config *cfg)
 {
     int                  ret      = 0;
-    mofs_inode_t         root_inode;
     struct fuse_context *context  = NULL;
     mofs_fuse_ctx_t     *fuse_ctx = NULL;
 
@@ -147,22 +144,9 @@ void *mofs_init_fuse(struct fuse_conn_info *conn, struct fuse_config *cfg)
 
     fuse_ctx = (mofs_fuse_ctx_t *)context->private_data;
 
-    ret = mofs_init_core(fuse_ctx->devfile_path);
+    ret = mofs_init_core(fuse_ctx->devfile_path, true, (uint32_t)geteuid(), (uint32_t)getegid());
     if (ret != 0) {
         fprintf(stderr, "Failed to initialize MOFS core: %d\n", ret);
-        exit(EXIT_FAILURE);
-    }
-
-    ret = mofs_read_inode(MOFS_ROOT_INODE_NUM, &root_inode);
-    if (ret != 0) {
-        fprintf(stderr, "Failed to read root inode: %d\n", ret);
-        exit(EXIT_FAILURE);
-    }
-    root_inode.i_uid = (uint32_t)geteuid();
-    root_inode.i_gid = (uint32_t)getegid();
-    ret              = mofs_write_inode(MOFS_ROOT_INODE_NUM, &root_inode);
-    if (ret != 0) {
-        fprintf(stderr, "Failed to update root inode owner: %d\n", ret);
         exit(EXIT_FAILURE);
     }
 
@@ -194,7 +178,7 @@ void mofs_destroy_fuse(void *private_data)
  *
  * Function behavior:
  * - Supports root path lookup (`/` and `/.`).
- * - Resolves inode number and reads inode metadata from MOFS.
+ * - Obtains inode metadata via `mofs_stat()` (POSIX layer).
  * - Fills `struct stat` and converts MOFS errors to OS errno values.
  *
  * @param[in] path Target path string.
@@ -212,7 +196,7 @@ int mofs_getattr_fuse(const char *path, struct stat *stbuf, struct fuse_file_inf
     mofs_fuse_bind_request_caller();
     memset(stbuf, 0, sizeof(struct stat));
 
-    ret = mofs_stat_core(path, &stat);
+    ret = mofs_stat(path, &stat);
     if (ret == 0) {
         stbuf->st_ino   = stat.st_ino;
         stbuf->st_nlink = stat.st_nlink;
@@ -220,8 +204,9 @@ int mofs_getattr_fuse(const char *path, struct stat *stbuf, struct fuse_file_inf
         stbuf->st_mode  = stat.st_mode;
         stbuf->st_uid   = stat.st_uid;
         stbuf->st_gid   = stat.st_gid;
+        return 0;
     }
-    return -(mofs_to_os_errno(ret));
+    return -errno;
 }
 
 /**
@@ -529,8 +514,7 @@ out:
  */
 int mofs_read_fuse(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
-    int                ret    = 0;
-    mofs_filehandle_t *handle = NULL;
+    int ret = 0;
 
     (void)path;
 
@@ -544,9 +528,7 @@ int mofs_read_fuse(const char *path, char *buf, size_t size, off_t offset, struc
         return 0;
     }
 
-    handle              = (mofs_filehandle_t *)(uintptr_t)(fi->fh);
-    handle->file_offset = (unsigned int)offset;
-    ret                 = mofs_read(handle, buf, size);
+    ret = mofs_pread((mofs_filehandle_t *)(uintptr_t)(fi->fh), buf, size, offset);
     if (ret < 0) {
         return -errno;
     }
@@ -571,8 +553,7 @@ int mofs_read_fuse(const char *path, char *buf, size_t size, off_t offset, struc
  */
 int mofs_write_fuse(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
-    int                ret    = 0;
-    mofs_filehandle_t *handle = NULL;
+    int ret = 0;
 
     (void)path;
 
@@ -586,9 +567,7 @@ int mofs_write_fuse(const char *path, const char *buf, size_t size, off_t offset
         return 0;
     }
 
-    handle              = (mofs_filehandle_t *)(uintptr_t)(fi->fh);
-    handle->file_offset = (unsigned int)offset;
-    ret                 = mofs_write(handle, buf, size);
+    ret = mofs_pwrite((mofs_filehandle_t *)(uintptr_t)(fi->fh), buf, size, offset);
     if (ret < 0) {
         return -errno;
     }
