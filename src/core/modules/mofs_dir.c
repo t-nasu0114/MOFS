@@ -6,6 +6,7 @@
 #include <mofs_inode.h>
 #include <mofs_mem.h>
 #include <mofs_path.h>
+#include <mofs_perm.h>
 #include <mofs_str.h>
 #include <mofs_type.h>
 #include <mofs_user.h>
@@ -22,36 +23,6 @@ static int get_free_dirhandle_index(void)
         }
     }
     return -1;
-}
-
-static int check_dir_write_permission(const mofs_user_ctx_t *user, const mofs_inode_t *inode)
-{
-    int          ret       = 0;
-    bool         is_member = false;
-    unsigned int write_bit = 0U;
-
-    if ((user == NULL) || (inode == NULL)) {
-        return MOFS_EINVAL;
-    }
-
-    ret = mofs_is_caller_in_group(inode->i_gid, &is_member);
-    if (ret != 0) {
-        return ret;
-    }
-
-    if (user->uid == inode->i_uid) {
-        write_bit = MOFS_S_IWUSR;
-    } else if (is_member) {
-        write_bit = MOFS_S_IWGRP;
-    } else {
-        write_bit = MOFS_S_IWOTH;
-    }
-
-    if ((inode->i_mode & write_bit) == 0U) {
-        return MOFS_EACCES;
-    }
-
-    return 0;
 }
 
 static int write_dot_entries(int child_inode_num, int parent_inode_num)
@@ -570,7 +541,9 @@ int mofs_mkdir_core(const char *path, mode_t mode)
     }
 
     mofs_memset(&path_info, 0, sizeof(path_info));
-    ret = mofs_resolve_path(path, MOFS_PATH_RESOLVE_PARENT | MOFS_PATH_RESOLVE_INODE | MOFS_PATH_ALLOW_MISSING_LEAF,
+    ret = mofs_resolve_path(path,
+                            MOFS_PATH_RESOLVE_PARENT | MOFS_PATH_RESOLVE_INODE | MOFS_PATH_ALLOW_MISSING_LEAF |
+                                MOFS_PATH_CHECK_ACCESS,
                             &path_info);
     if (ret != 0) {
         return ret;
@@ -594,7 +567,7 @@ int mofs_mkdir_core(const char *path, mode_t mode)
     if ((parent_inode.i_mode & MOFS_FTYPE_DIR) == 0U) {
         return MOFS_ENOTDIR;
     }
-    ret = check_dir_write_permission(&user, &parent_inode);
+    ret = mofs_check_dir_write(&user, &parent_inode);
     if (ret != 0) {
         return ret;
     }
@@ -714,12 +687,34 @@ int mofs_rmdir_core(const char *path)
     }
 
     mofs_memset(&path_info, 0, sizeof(path_info));
-    ret = mofs_resolve_path(path, MOFS_PATH_RESOLVE_PARENT | MOFS_PATH_RESOLVE_INODE, &path_info);
+    ret = mofs_resolve_path(path, MOFS_PATH_RESOLVE_PARENT | MOFS_PATH_RESOLVE_INODE | MOFS_PATH_CHECK_ACCESS,
+                            &path_info);
     if (ret != 0) {
         return ret;
     }
     if (is_dot_or_dotdot_name(path_info.leaf_name)) {
         return MOFS_EINVAL;
+    }
+
+    {
+        mofs_user_ctx_t user;
+        mofs_inode_t    parent_inode;
+
+        ret = mofs_get_caller_user(&user);
+        if (ret != 0) {
+            return ret;
+        }
+        if (user.valid == false) {
+            return MOFS_EPERM;
+        }
+        ret = mofs_read_inode(path_info.parent_inode_num, &parent_inode);
+        if (ret != 0) {
+            return ret;
+        }
+        ret = mofs_check_dir_write(&user, &parent_inode);
+        if (ret != 0) {
+            return ret;
+        }
     }
 
     ret = mofs_read_inode(path_info.leaf_inode_num, &target_inode);
@@ -790,15 +785,25 @@ int mofs_rmdir_core(const char *path)
  */
 int mofs_opendir_core(const char *path, mofs_dirhandle_t **handle)
 {
-    int          ret       = 0;
-    int          inode_num = 0;
-    mofs_inode_t inode;
-    int          index = 0;
+    int             ret       = 0;
+    int             inode_num = 0;
+    mofs_inode_t    inode;
+    mofs_user_ctx_t user;
+    int             index = 0;
 
     if ((path == NULL) || (handle == NULL)) {
         ret = MOFS_EINVAL;
     } else {
         *handle = NULL;
+    }
+
+    if (ret == 0) {
+        ret = mofs_get_caller_user(&user);
+        if (ret == 0) {
+            if (user.valid == false) {
+                ret = MOFS_EPERM;
+            }
+        }
     }
 
     if (ret == 0) {
@@ -808,7 +813,7 @@ int mofs_opendir_core(const char *path, mofs_dirhandle_t **handle)
             ret = mofs_read_inode(inode_num, &inode);
             if (ret == 0) {
                 if (inode.i_mode & MOFS_FTYPE_DIR) {
-                    ret = 0;
+                    ret = mofs_check_dir_read(&user, &inode);
                 } else {
                     ret = MOFS_ENOTDIR;
                 }
@@ -878,16 +883,17 @@ int mofs_closedir_core(mofs_dirhandle_t **handle)
  */
 int mofs_readdir_core(mofs_dirhandle_t **handle)
 {
-    int            ret = 0;
-    mofs_inode_t   inode;
-    mofs_dirent_t *buf = NULL;
-    mofs_dirent_t  dirent_tmp;
-    size_t         fraction = 0;
-    unsigned int   start_block;
-    unsigned int   start_idx;
-    unsigned int   entries_num;
-    bool           found        = false;
-    unsigned int   read_blk_num = 0;
+    int             ret = 0;
+    mofs_inode_t    inode;
+    mofs_user_ctx_t user;
+    mofs_dirent_t  *buf = NULL;
+    mofs_dirent_t   dirent_tmp;
+    size_t          fraction = 0;
+    unsigned int    start_block;
+    unsigned int    start_idx;
+    unsigned int    entries_num;
+    bool            found        = false;
+    unsigned int    read_blk_num = 0;
 
     if ((handle == NULL) || (*handle == NULL) || ((*handle)->used == false)) {
         ret = MOFS_EINVAL;
@@ -901,48 +907,61 @@ int mofs_readdir_core(mofs_dirhandle_t **handle)
     }
 
     if (ret == 0) {
+        ret = mofs_get_caller_user(&user);
+        if (ret == 0) {
+            if (user.valid == false) {
+                ret = MOFS_EPERM;
+            }
+        }
+    }
+
+    if (ret == 0) {
         ret = mofs_read_inode((*handle)->inode_num, &inode);
         if (ret == 0) {
             if (!(inode.i_mode & MOFS_FTYPE_DIR)) {
                 ret = MOFS_ENOTDIR;
             } else {
-                /* Read the directory data block */
+                ret = mofs_check_dir_read(&user, &inode);
+            }
+        }
+    }
 
-                /* Calculate the start block and index */
-                start_block = (*handle)->dirent_offset / (ctx.sp_blk.blk_size / sizeof(mofs_dirent_t));
-                start_idx   = (*handle)->dirent_offset % (ctx.sp_blk.blk_size / sizeof(mofs_dirent_t));
+    if (ret == 0) {
+        /* Read the directory data block */
 
-                for (; start_block < (inode.i_size + ctx.sp_blk.blk_size - 1) / ctx.sp_blk.blk_size; start_block++) {
-                    /* Read the directory data block */
-                    ret = read_file_data_block((*handle)->inode_num, buf, start_block, 1, &read_blk_num, &fraction);
+        /* Calculate the start block and index */
+        start_block = (*handle)->dirent_offset / (ctx.sp_blk.blk_size / sizeof(mofs_dirent_t));
+        start_idx   = (*handle)->dirent_offset % (ctx.sp_blk.blk_size / sizeof(mofs_dirent_t));
 
-                    /* Find the directory entry in the buffer */
-                    if (ret == 0) {
-                        if (fraction != 0) {
-                            entries_num = fraction / sizeof(mofs_dirent_t);
-                        } else {
-                            entries_num = ctx.sp_blk.blk_size / sizeof(mofs_dirent_t);
-                        }
+        for (; start_block < (inode.i_size + ctx.sp_blk.blk_size - 1) / ctx.sp_blk.blk_size; start_block++) {
+            /* Read the directory data block */
+            ret = read_file_data_block((*handle)->inode_num, buf, start_block, 1, &read_blk_num, &fraction);
 
-                        for (; start_idx < entries_num; start_idx++) {
-                            mofs_memcpy(&dirent_tmp, buf + start_idx, sizeof(mofs_dirent_t));
-                            if ((dirent_tmp.inode_num != 0) && (dirent_tmp.name[0] != '\0')) {
-                                found = true;
-                                break;
-                            }
-                        }
-                        /* Reset the index for the next block */
-                        if (found == false) {
-                            start_idx = 0;
-                        }
-                    } else {
-                        break;
-                    }
+            /* Find the directory entry in the buffer */
+            if (ret == 0) {
+                if (fraction != 0) {
+                    entries_num = fraction / sizeof(mofs_dirent_t);
+                } else {
+                    entries_num = ctx.sp_blk.blk_size / sizeof(mofs_dirent_t);
+                }
 
-                    if (found == true) {
+                for (; start_idx < entries_num; start_idx++) {
+                    mofs_memcpy(&dirent_tmp, buf + start_idx, sizeof(mofs_dirent_t));
+                    if ((dirent_tmp.inode_num != 0) && (dirent_tmp.name[0] != '\0')) {
+                        found = true;
                         break;
                     }
                 }
+                /* Reset the index for the next block */
+                if (found == false) {
+                    start_idx = 0;
+                }
+            } else {
+                break;
+            }
+
+            if (found == true) {
+                break;
             }
         }
     }

@@ -9,6 +9,7 @@
 #define MOFS_PATH_RESOLVE_INODE              0x01U
 #define MOFS_PATH_RESOLVE_PARENT             0x02U
 #define MOFS_PATH_ALLOW_MISSING_LEAF         0x04U
+#define MOFS_PATH_CHECK_ACCESS               0x08U
 
 typedef struct mofs_path_info
 {

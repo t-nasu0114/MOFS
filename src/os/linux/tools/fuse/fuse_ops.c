@@ -52,18 +52,28 @@ static int build_mofs_open_args(int fuse_flags, mode_t requested_mode, bool forc
         return MOFS_EINVAL;
     }
 
-    switch (fuse_flags & O_ACCMODE) {
-    case O_RDONLY:
-        flags = MOFS_OFLAG_RDONLY;
-        break;
-    case O_WRONLY:
-        flags = MOFS_OFLAG_WRONLY;
-        break;
-    case O_RDWR:
-        flags = MOFS_OFLAG_RDWR;
-        break;
-    default:
-        return MOFS_EINVAL;
+#if defined(O_PATH)
+    if ((fuse_flags & O_PATH) != 0) {
+        if (((fuse_flags & O_ACCMODE) != 0) && ((fuse_flags & O_ACCMODE) != O_RDONLY)) {
+            return MOFS_EINVAL;
+        }
+        flags = MOFS_OFLAG_SEARCH;
+    } else
+#endif
+    {
+        switch (fuse_flags & O_ACCMODE) {
+        case O_RDONLY:
+            flags = MOFS_OFLAG_RDONLY;
+            break;
+        case O_WRONLY:
+            flags = MOFS_OFLAG_WRONLY;
+            break;
+        case O_RDWR:
+            flags = MOFS_OFLAG_RDWR;
+            break;
+        default:
+            return MOFS_EINVAL;
+        }
     }
 
 #ifdef O_DIRECTORY

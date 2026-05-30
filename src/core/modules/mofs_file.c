@@ -7,6 +7,7 @@
 #include <mofs_inode.h>
 #include <mofs_mem.h>
 #include <mofs_path.h>
+#include <mofs_perm.h>
 #include <mofs_type.h>
 #include <mofs_user.h>
 
@@ -14,7 +15,6 @@
 mofs_filehandle_t filehandle_pool[MOFS_FILEHANDLE_POOL_SIZE];
 
 /* internal functions */
-static int check_open_permission(int flags, mofs_user_ctx_t *user, mofs_inode_t *inode);
 static int zero_partial_block_tail(int inode_num, unsigned int blk_idx, size_t tail_start);
 static int zero_file_byte_range(int inode_num, uint32_t from_off, uint32_t to_off);
 static int truncate_inode(int inode_num, uint32_t new_size);
@@ -258,7 +258,9 @@ int mofs_create_core(const char *path, mode_t mode, int *inode_num)
     *inode_num = -1;
 
     mofs_memset(&path_info, 0, sizeof(path_info));
-    ret = mofs_resolve_path(path, MOFS_PATH_RESOLVE_PARENT | MOFS_PATH_RESOLVE_INODE | MOFS_PATH_ALLOW_MISSING_LEAF,
+    ret = mofs_resolve_path(path,
+                            MOFS_PATH_RESOLVE_PARENT | MOFS_PATH_RESOLVE_INODE | MOFS_PATH_ALLOW_MISSING_LEAF |
+                                MOFS_PATH_CHECK_ACCESS,
                             &path_info);
     if (ret != 0) {
         return ret;
@@ -279,7 +281,7 @@ int mofs_create_core(const char *path, mode_t mode, int *inode_num)
     if (ret != 0) {
         return ret;
     }
-    ret = check_open_permission(MOFS_OFLAG_WRONLY, &user, &parent_inode);
+    ret = mofs_check_dir_write(&user, &parent_inode);
     if (ret != 0) {
         return ret;
     }
@@ -344,14 +346,34 @@ int mofs_unlink_core(const char *path)
     int              target_inode_num = -1;
     unsigned int     used_blk_num     = 0U;
     mofs_inode_t     target_inode;
+    mofs_inode_t     parent_inode;
+    mofs_user_ctx_t  user;
     mofs_path_info_t path_info;
 
     mofs_memset(&path_info, 0, sizeof(path_info));
-    ret = mofs_resolve_path(path, MOFS_PATH_RESOLVE_PARENT | MOFS_PATH_RESOLVE_INODE, &path_info);
+    ret = mofs_resolve_path(path, MOFS_PATH_RESOLVE_PARENT | MOFS_PATH_RESOLVE_INODE | MOFS_PATH_CHECK_ACCESS,
+                            &path_info);
     if (ret != 0) {
         return ret;
     }
     target_inode_num = path_info.leaf_inode_num;
+
+    ret = mofs_get_caller_user(&user);
+    if (ret != 0) {
+        return ret;
+    }
+    if (user.valid == false) {
+        return MOFS_EPERM;
+    }
+
+    ret = mofs_read_inode(path_info.parent_inode_num, &parent_inode);
+    if (ret != 0) {
+        return ret;
+    }
+    ret = mofs_check_dir_write(&user, &parent_inode);
+    if (ret != 0) {
+        return ret;
+    }
 
     ret = mofs_read_inode(target_inode_num, &target_inode);
     if (ret != 0) {
@@ -376,132 +398,6 @@ int mofs_unlink_core(const char *path)
     }
 
     ret = free_inode(target_inode_num);
-    return ret;
-}
-
-static int check_open_permission(int flags, mofs_user_ctx_t *user, mofs_inode_t *inode)
-{
-    int          ret             = 0;
-    unsigned int open_perm_flags = 0;
-    bool         is_determined   = false;
-
-    /* argument NULL check */
-    if ((user == NULL) || (inode == NULL)) {
-        ret = MOFS_EINVAL;
-        goto out;
-    }
-
-    /* open flag specified check */
-    if ((flags & MOFS_OFLAG_ACCMODE) == 0) {
-        ret = MOFS_EINVAL;
-        goto out;
-    }
-
-    /* check open permission flags validity */
-    if ((flags & MOFS_OFLAG_EXEC) == MOFS_OFLAG_EXEC) {
-        open_perm_flags = MOFS_OFLAG_EXEC;
-        is_determined   = true;
-    }
-    if ((flags & MOFS_OFLAG_SEARCH) == MOFS_OFLAG_SEARCH) {
-        if (is_determined) {
-            open_perm_flags = 0;
-            ret             = MOFS_EINVAL;
-            goto out;
-        } else {
-            open_perm_flags = MOFS_OFLAG_SEARCH;
-            is_determined   = true;
-        }
-    }
-    if ((flags & MOFS_OFLAG_RDONLY) == MOFS_OFLAG_RDONLY) {
-        if (is_determined) {
-            open_perm_flags = 0;
-            ret             = MOFS_EINVAL;
-            goto out;
-        } else {
-            open_perm_flags = MOFS_OFLAG_RDONLY;
-            is_determined   = true;
-        }
-    }
-    if ((flags & MOFS_OFLAG_WRONLY) == MOFS_OFLAG_WRONLY) {
-        if (is_determined) {
-            if (open_perm_flags == MOFS_OFLAG_RDONLY) {
-                open_perm_flags = MOFS_OFLAG_RDWR;
-            } else {
-                open_perm_flags = 0;
-                ret             = MOFS_EINVAL;
-                goto out;
-            }
-        } else {
-            open_perm_flags = MOFS_OFLAG_WRONLY;
-            is_determined   = true;
-        }
-    }
-
-    /* check open permission */
-    if (is_determined) {
-        bool         is_member  = false;
-        unsigned int is_read    = 0;
-        unsigned int is_write   = 0;
-        unsigned int is_execute = 0;
-
-        /* check caller user and group permission */
-        ret = mofs_is_caller_in_group(inode->i_gid, &is_member);
-        if (ret != 0) {
-            goto out;
-        }
-        if (user->uid == inode->i_uid) {
-            is_read    = MOFS_S_IRUSR;
-            is_write   = MOFS_S_IWUSR;
-            is_execute = MOFS_S_IXUSR;
-        } else if (is_member) {
-            is_read    = MOFS_S_IRGRP;
-            is_write   = MOFS_S_IWGRP;
-            is_execute = MOFS_S_IXGRP;
-        } else {
-            is_read    = MOFS_S_IROTH;
-            is_write   = MOFS_S_IWOTH;
-            is_execute = MOFS_S_IXOTH;
-        }
-
-        /* check open permission flags */
-        if (open_perm_flags == MOFS_OFLAG_RDONLY) {
-            if (inode->i_mode & is_read) {
-                ret = 0;
-            } else {
-                ret = MOFS_EACCES;
-                goto out;
-            }
-        } else if (open_perm_flags == MOFS_OFLAG_WRONLY) {
-            if (inode->i_mode & is_write) {
-                ret = 0;
-            } else {
-                ret = MOFS_EACCES;
-                goto out;
-            }
-        } else if (open_perm_flags == MOFS_OFLAG_RDWR) {
-            if ((inode->i_mode & is_read) && (inode->i_mode & is_write)) {
-                ret = 0;
-            } else {
-                ret = MOFS_EACCES;
-                goto out;
-            }
-        } else if (open_perm_flags == MOFS_OFLAG_EXEC) {
-            if (inode->i_mode & is_execute) {
-                ret = 0;
-            } else {
-                ret = MOFS_EACCES;
-                goto out;
-            }
-        } else if (open_perm_flags == MOFS_OFLAG_SEARCH) {
-            if (inode->i_mode & is_execute) {
-                ret = 0;
-            } else {
-                ret = MOFS_EACCES;
-                goto out;
-            }
-        }
-    }
-out:
     return ret;
 }
 
@@ -584,7 +480,7 @@ int mofs_open_core(const char *path, int flags, mode_t mode, mofs_filehandle_t *
     }
 
     /* check user and permission */
-    ret = check_open_permission(flags, &user, &inode);
+    ret = mofs_check_open_permission(flags, &user, &inode);
     if (ret != 0) {
         goto out;
     }
@@ -694,7 +590,7 @@ int mofs_read_core(mofs_filehandle_t **handle, void *buf, size_t size, off_t *of
         ret = MOFS_EPERM;
         goto out;
     }
-    ret = check_open_permission((*handle)->open_flags, &user, &inode);
+    ret = mofs_check_open_permission((*handle)->open_flags, &user, &inode);
     if (ret != 0) {
         goto out;
     }
@@ -820,7 +716,7 @@ int mofs_write_core(mofs_filehandle_t **handle, const void *buf, size_t size, of
         ret = MOFS_EPERM;
         goto out;
     }
-    ret = check_open_permission((*handle)->open_flags & MOFS_OFLAG_ACCMODE, &user, &inode);
+    ret = mofs_check_open_permission((*handle)->open_flags & MOFS_OFLAG_ACCMODE, &user, &inode);
     if (ret != 0) {
         goto out;
     }
@@ -1150,7 +1046,7 @@ static int truncate_inode(int inode_num, uint32_t new_size)
     } else if (user.valid == false) {
         return MOFS_EPERM;
     }
-    ret = check_open_permission(MOFS_OFLAG_WRONLY, &user, &inode);
+    ret = mofs_check_open_permission(MOFS_OFLAG_WRONLY, &user, &inode);
     if (ret != 0) {
         return ret;
     }
@@ -1275,9 +1171,10 @@ int mofs_truncate_core(int inode_num, off_t length)
  */
 int mofs_stat_core(const char *path, mofs_stat_t *stbuf)
 {
-    int          ret       = 0;
-    int          inode_num = -1;
-    mofs_inode_t inode;
+    int             ret       = 0;
+    int             inode_num = -1;
+    mofs_inode_t    inode;
+    mofs_user_ctx_t user;
 
     if ((path == NULL) || (stbuf == NULL)) {
         ret = MOFS_EINVAL;
@@ -1287,21 +1184,38 @@ int mofs_stat_core(const char *path, mofs_stat_t *stbuf)
         mofs_memset(stbuf, 0, sizeof(mofs_stat_t));
         mofs_memset(&inode, 0, sizeof(mofs_inode_t));
 
+        ret = mofs_get_caller_user(&user);
+        if (ret == 0) {
+            if (user.valid == false) {
+                ret = MOFS_EPERM;
+            }
+        }
+    }
+
+    if (ret == 0) {
         ret = mofs_path_to_inode_num(path, &inode_num);
         if (ret == 0) {
             ret = mofs_read_inode(inode_num, &inode);
             if (ret == 0) {
-                stbuf->st_ino   = inode_num;
-                stbuf->st_nlink = inode.i_links;
-                stbuf->st_size  = inode.i_size;
-                stbuf->st_mode  = inode.i_mode;
-                stbuf->st_uid   = inode.i_uid;
-                stbuf->st_gid   = inode.i_gid;
-                stbuf->st_atime_sec = (int64_t)inode.i_atime;
-                stbuf->st_mtime_sec = (int64_t)inode.i_mtime;
-                stbuf->st_ctime_sec = (int64_t)inode.i_ctime;
+                if ((inode.i_mode & MOFS_FTYPE_DIR) != 0U) {
+                    ret = mofs_check_dir_traverse(&user, &inode);
+                } else {
+                    ret = mofs_check_open_permission(MOFS_OFLAG_RDONLY, &user, &inode);
+                }
             }
         }
+    }
+
+    if (ret == 0) {
+        stbuf->st_ino       = inode_num;
+        stbuf->st_nlink     = inode.i_links;
+        stbuf->st_size      = inode.i_size;
+        stbuf->st_mode      = inode.i_mode;
+        stbuf->st_uid       = inode.i_uid;
+        stbuf->st_gid       = inode.i_gid;
+        stbuf->st_atime_sec = (int64_t)inode.i_atime;
+        stbuf->st_mtime_sec = (int64_t)inode.i_mtime;
+        stbuf->st_ctime_sec = (int64_t)inode.i_ctime;
     }
 
     return ret;
