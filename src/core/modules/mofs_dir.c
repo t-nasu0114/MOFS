@@ -382,7 +382,8 @@ int add_dir_entry(const char *component, int parent_inode_num, int child_inode_n
     unsigned int   target_blk_idx   = 0U;
     unsigned int   target_in_blk    = 0U;
     unsigned int   old_blk_num      = 0U;
-    unsigned int   max_entry_num    = MOFS_DATA_BLK_PER_FILE * (ctx.sp_blk.blk_size / sizeof(mofs_dirent_t));
+    /* Directory entry capacity is capped by MOFS_MAX_FILE_DATA_BLOCKS, not current size. */
+    unsigned int   max_entry_num    = MOFS_MAX_FILE_DATA_BLOCKS * (ctx.sp_blk.blk_size / sizeof(mofs_dirent_t));
 
     if ((component == NULL) || (component[0] == '\0') || (parent_inode_num < 0) || (child_inode_num <= 0) ||
         (ctx.sp_blk.inode_num <= (unsigned int)child_inode_num)) {
@@ -461,7 +462,8 @@ int add_dir_entry(const char *component, int parent_inode_num, int child_inode_n
 
     /* No tombstone slot: append at EOF, expanding by one data block if needed. */
     if (target_blk_idx >= old_blk_num) {
-        if (old_blk_num >= MOFS_DATA_BLK_PER_FILE) {
+        if (old_blk_num >= MOFS_MAX_FILE_DATA_BLOCKS) {
+            /* Cannot grow directory beyond compile-time block limit. */
             ret = MOFS_EFBIG;
             goto out;
         }
@@ -719,7 +721,7 @@ int mofs_rmdir_core(const char *path)
         return ret;
     }
 
-    used_blk_num = (target_inode.i_size + ctx.sp_blk.blk_size - 1U) / ctx.sp_blk.blk_size;
+    used_blk_num = target_inode.i_nr_blocks;
     if (used_blk_num > 0U) {
         ret = free_data_block(path_info.leaf_inode_num, 0U, used_blk_num);
         if (ret != 0) {

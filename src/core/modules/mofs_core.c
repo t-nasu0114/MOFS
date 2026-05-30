@@ -159,3 +159,17 @@ int mofs_fini_core(void)
     ctx.init     = false;
     return 0;
 }
+
+/**
+ * @brief Return the maximum file size in bytes for the mounted volume.
+ *
+ * Function behavior:
+ * - Computes `MOFS_MAX_FILE_DATA_BLOCKS * ctx.sp_blk.blk_size`.
+ * - Requires `mofs_init_core()` to have populated `ctx.sp_blk`.
+ *
+ * @return Maximum file size in bytes.
+ */
+uint64_t mofs_max_file_bytes(void)
+{
+    return (uint64_t)MOFS_MAX_FILE_DATA_BLOCKS * (uint64_t)ctx.sp_blk.blk_size;
+}

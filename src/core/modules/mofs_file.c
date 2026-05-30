@@ -31,8 +31,9 @@ static int get_free_filehandle_index(void)
  *
  * Function behavior:
  * - Reads inode metadata for the target file.
- * - Validates requested file block index (`start_blk_num`) against file size.
- * - Reads one filesystem block from the file's data-block mapping.
+ * - Validates `start_blk_num` against `i_nr_blocks` and file size.
+ * - Resolves each logical block via `resolve_file_data_block()`.
+ * - Reads one filesystem block per resolved absolute block number.
  * - Returns the valid byte count in the last file block through `fraction`.
  *
  * @param[in] inode_num Target inode number.
@@ -56,11 +57,6 @@ int read_file_data_block(int inode_num, void *buf, unsigned int start_blk_num, u
         return ret;
     }
 
-    if (start_blk_num >= MOFS_DATA_BLK_PER_FILE) {
-        ret = MOFS_EINVAL;
-        return ret;
-    }
-
     /* if request block number is 0, return 0 */
     if (req_blk_num == 0) {
         (*read_blk_num) = 0U;
@@ -68,15 +64,15 @@ int read_file_data_block(int inode_num, void *buf, unsigned int start_blk_num, u
         return 0;
     }
 
-    /* check file size and block index */
+    /* check mapped block count and trim read range to valid file size */
     if (ret == 0) {
         ret = mofs_read_inode(inode_num, &inode_buf);
         if (ret == 0) {
-            if (((inode_buf.i_size + ctx.sp_blk.blk_size - 1) / ctx.sp_blk.blk_size) <= start_blk_num) {
-                /* exceed file size limit */
+            if (start_blk_num >= inode_buf.i_nr_blocks) {
+                ret = MOFS_EINVAL;
+            } else if (((inode_buf.i_size + ctx.sp_blk.blk_size - 1) / ctx.sp_blk.blk_size) <= start_blk_num) {
                 ret = MOFS_EINVAL;
             } else if (start_blk_num + req_blk_num > (inode_buf.i_size + ctx.sp_blk.blk_size - 1) / ctx.sp_blk.blk_size) {
-                /* trim request block number to fit file size */
                 req_blk_num = (inode_buf.i_size + ctx.sp_blk.blk_size - 1) / ctx.sp_blk.blk_size - start_blk_num;
             }
         }
@@ -89,9 +85,15 @@ int read_file_data_block(int inode_num, void *buf, unsigned int start_blk_num, u
         for (unsigned int i = 0; i < req_blk_num; i++) {
             unsigned int read_one_blk_num = 0U;
             size_t       read_fraction    = 0U;
+            unsigned int abs_blk_num      = 0U;
 
-            ret = read_continuous_blocks(ctx.dev_fd, buf, 1U, inode_buf.i_data_blk[start_blk_num + i],
-                                         &read_one_blk_num, &read_fraction);
+            /* Logical index -> absolute data block via on-disk list nodes. */
+            ret = resolve_file_data_block(inode_num, start_blk_num + i, &abs_blk_num);
+            if (ret != 0) {
+                break;
+            }
+
+            ret = read_continuous_blocks(ctx.dev_fd, buf, 1U, abs_blk_num, &read_one_blk_num, &read_fraction);
             if (ret != 0) {
                 break;
             }
@@ -120,13 +122,13 @@ int read_file_data_block(int inode_num, void *buf, unsigned int start_blk_num, u
 }
 
 /**
- * @brief Write file data blocks mapped by inode block slots.
+ * @brief Write file data blocks through the on-disk block list mapping.
  *
  * Function behavior:
- * - Reads inode metadata and validates requested file block range.
- * - Writes data one block at a time using `i_data_blk[start_blk_num + i]`.
- * - Reports the number of fully written blocks and short-write remainder.
- * - Does not allocate data blocks; caller must prepare block mapping.
+ * - Reads inode metadata and validates the requested range against `i_nr_blocks`.
+ * - Resolves each logical block via `resolve_file_data_block()`.
+ * - Writes one filesystem block per resolved absolute block number.
+ * - Does not allocate data blocks; caller must extend mapping first.
  *
  * @param[in] inode_num Target inode number.
  * @param[in] buf Source buffer containing file data to write.
@@ -151,11 +153,6 @@ int write_file_data_block(int inode_num, const void *buf, unsigned int start_blk
         return ret;
     }
 
-    if (start_blk_num >= MOFS_DATA_BLK_PER_FILE) {
-        ret = MOFS_EINVAL;
-        return ret;
-    }
-
     /* if request block number is 0, return 0 */
     if (req_blk_num == 0) {
         (*written_blk_num) = 0U;
@@ -163,13 +160,14 @@ int write_file_data_block(int inode_num, const void *buf, unsigned int start_blk
         return 0;
     }
 
-    /* check file size and block index */
+    /* check mapped block range (allocation is done by the caller) */
     if (ret == 0) {
         ret = mofs_read_inode(inode_num, &inode_buf);
         if (ret == 0) {
-            if (req_blk_num > MOFS_DATA_BLK_PER_FILE - start_blk_num) {
-                /* trim request block number to fit file size */
-                req_blk_num = MOFS_DATA_BLK_PER_FILE - start_blk_num;
+            if (start_blk_num >= inode_buf.i_nr_blocks) {
+                ret = MOFS_EINVAL;
+            } else if (req_blk_num > (inode_buf.i_nr_blocks - start_blk_num)) {
+                req_blk_num = inode_buf.i_nr_blocks - start_blk_num;
             }
         }
     }
@@ -186,7 +184,12 @@ int write_file_data_block(int inode_num, const void *buf, unsigned int start_blk
         for (unsigned int i = 0; i < req_blk_num; i++) {
             unsigned int written_one_blk_num = 0U;
             size_t       written_fraction    = 0U;
-            unsigned int abs_blk_num         = inode_buf.i_data_blk[start_blk_num + i];
+            unsigned int abs_blk_num         = 0U;
+
+            ret = resolve_file_data_block(inode_num, start_blk_num + i, &abs_blk_num);
+            if (ret != 0) {
+                break;
+            }
 
             if ((abs_blk_num < ctx.sp_blk.data_region_start) ||
                 (ctx.sp_blk.data_region_start + ctx.sp_blk.data_blk_num <= abs_blk_num)) {
@@ -355,8 +358,9 @@ int mofs_unlink_core(const char *path)
         return ret;
     }
 
-    used_blk_num = (target_inode.i_size + ctx.sp_blk.blk_size - 1U) / ctx.sp_blk.blk_size;
+    used_blk_num = target_inode.i_nr_blocks;
     if (used_blk_num > 0U) {
+        /* Free all mapped data blocks and list nodes via compact remove from index 0. */
         ret = free_data_block(target_inode_num, 0U, used_blk_num);
         if (ret != 0) {
             return ret;
@@ -769,7 +773,7 @@ int mofs_write_core(mofs_filehandle_t **handle, const void *buf, size_t size, of
     size_t          total_write_size = 0U;
     size_t          write_pos_in_blk = 0U;
     uint32_t        old_size         = 0U;
-    uint64_t        max_file_size    = (uint64_t)MOFS_DATA_BLK_PER_FILE * (uint64_t)ctx.sp_blk.blk_size;
+    uint64_t        max_file_size    = mofs_max_file_bytes(); /* MOFS_MAX_FILE_DATA_BLOCKS * blk_size */
     uint64_t        write_end_offset = 0U;
     bool            alloc_done       = false;
     bool            write_started    = false;
@@ -851,13 +855,17 @@ int mofs_write_core(mofs_filehandle_t **handle, const void *buf, size_t size, of
     }
     mofs_memset(buf_tmp, 0, (size_t)req_blk_num * ctx.sp_blk.blk_size);
 
-    /* preload existing file blocks for read-modify-write */
+    /* Preload overlapping existing blocks (read-modify-write) via list mapping. */
     current_blk_num = (old_size + ctx.sp_blk.blk_size - 1U) / ctx.sp_blk.blk_size;
     for (unsigned int i = 0U; i < req_blk_num; i++) {
         unsigned int file_blk_num = start_blk_num + i;
-        unsigned int abs_blk_num  = inode.i_data_blk[file_blk_num];
+        unsigned int abs_blk_num = 0U;
         if (file_blk_num >= current_blk_num) {
             continue;
+        }
+        ret = resolve_file_data_block((*handle)->inode_num, file_blk_num, &abs_blk_num);
+        if (ret != 0) {
+            goto out;
         }
         if ((abs_blk_num < ctx.sp_blk.data_region_start) ||
             (ctx.sp_blk.data_region_start + ctx.sp_blk.data_blk_num <= abs_blk_num)) {

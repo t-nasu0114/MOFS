@@ -18,3 +18,17 @@ mofs_add_cmocka_test(test_core_format
         ${OS_SERVICE_LIB_NAME}
         mofs_test_fixture
 )
+
+mofs_add_cmocka_test(test_core_block_list
+    SOURCES test_core_block_list.c
+    LINK_LIBS
+        ${POSIX_API_LAYER_LIB_NAME}
+        ${CORE_LIB_NAME}
+        ${CORE_FORMAT_LIB_NAME}
+        ${OS_SERVICE_LIB_NAME}
+        mofs_test_fixture
+)
+target_include_directories(test_core_block_list PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/core/include
+    ${CMAKE_SOURCE_DIR}/src/core/modules
+)
