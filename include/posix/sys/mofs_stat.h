@@ -9,13 +9,15 @@
 
 typedef struct mofs_stat
 {
-    ino_t   st_ino;
-    mode_t  st_mode;
-    nlink_t st_nlink;
-    uid_t   st_uid;
-    gid_t   st_gid;
-    off_t   st_size;
-    /* Time info is not supported yet */
+    ino_t    st_ino;
+    mode_t   st_mode;
+    nlink_t  st_nlink;
+    uid_t    st_uid;
+    gid_t    st_gid;
+    off_t    st_size;
+    int64_t  st_atime_sec;
+    int64_t  st_mtime_sec;
+    int64_t  st_ctime_sec;
     uint32_t st_blocks;
 } mofs_stat_t;
 

@@ -3,6 +3,7 @@
 #include <mofs_devio.h>
 #include <mofs_file.h>
 #include <mofs_mem.h>
+#include <mofs_time.h>
 #include <mofs_type.h>
 #include <mofs_util.h>
 
@@ -247,6 +248,18 @@ int mofs_format(const char *device_file, int fs_size, int blk_size)
     root_inode.i_gid       = 0;
     root_inode.i_data_head = superblock.data_region_start + 1U;
     root_inode.i_nr_blocks = 1U;
+    {
+        mofs_time_sec_t now = MOFS_TIME_INVALID;
+
+        ret = mofs_now(&now);
+        if (ret != 0) {
+            MOFS_ERR("Failed to set root inode timestamps");
+            goto out2;
+        }
+        root_inode.i_atime = now;
+        root_inode.i_mtime = now;
+        root_inode.i_ctime = now;
+    }
 
     if (dev_lseek(fd,
                   (off_t)((uint64_t)superblock.inode_table_start * (uint64_t)eff_blk_bytes) +

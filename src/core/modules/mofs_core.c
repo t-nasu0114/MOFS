@@ -119,7 +119,11 @@ int mofs_init_core(const char *path, bool update_root_owner, uint32_t root_uid, 
         }
         root_inode.i_uid = root_uid;
         root_inode.i_gid = root_gid;
-        ret              = mofs_write_inode(MOFS_ROOT_INODE_NUM, &root_inode);
+        ret              = mofs_inode_stamp_now(&root_inode, MOFS_INODE_TIME_CTIME);
+        if (ret != 0) {
+            goto out3;
+        }
+        ret = mofs_write_inode(MOFS_ROOT_INODE_NUM, &root_inode);
         if (ret != 0) {
             goto out3;
         }

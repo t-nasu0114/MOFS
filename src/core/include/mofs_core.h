@@ -114,7 +114,7 @@ typedef struct mofs_data_list_hdr
     uint32_t nr_ptrs;  /* Number of valid data block pointers following header */
 } mofs_data_list_hdr_t;
 
-/* Inode (64byte aligned) */
+/* Inode (64 bytes on disk) */
 typedef struct mofs_inode
 {
     uint32_t i_size;      /* File size in bytes */
@@ -124,8 +124,13 @@ typedef struct mofs_inode
     uint32_t i_gid;       /* Group ID */
     uint32_t i_data_head; /* Absolute block of first list node, 0 if no data mapping */
     uint32_t i_nr_blocks; /* Number of file data blocks (not list nodes) */
-    uint32_t reserved[8]; /* Padding to 64 bytes */
+    uint64_t i_atime;     /* Last access time (Unix epoch seconds) */
+    uint64_t i_mtime;     /* Last modification time (Unix epoch seconds) */
+    uint64_t i_ctime;     /* Last status change time (Unix epoch seconds) */
+    uint32_t reserved[4]; /* Padding to 64 bytes */
 } mofs_inode_t;
+
+typedef char mofs_inode_size_must_be_64[(sizeof(mofs_inode_t) == 64U) ? 1 : -1];
 
 /***************************
  * Context

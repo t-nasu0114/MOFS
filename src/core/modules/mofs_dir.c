@@ -335,6 +335,11 @@ int remove_dir_entry(const char *component, int parent_inode_num)
 
     if ((ret == 0) && (found == false)) {
         ret = MOFS_ENOENT;
+    } else if ((ret == 0) && (found == true)) {
+        ret = mofs_inode_stamp_now(&parent_inode, MOFS_INODE_TIME_MTIME | MOFS_INODE_TIME_CTIME);
+        if (ret == 0) {
+            ret = mofs_write_inode(parent_inode_num, &parent_inode);
+        }
     }
 
 out:
@@ -499,10 +504,15 @@ int add_dir_entry(const char *component, int parent_inode_num, int child_inode_n
         goto rollback_alloc;
     }
 
-    if (!found_reusable) {
-        /* Only true append consumes logical size; tombstone reuse keeps size. */
-        parent_inode.i_size += sizeof(mofs_dirent_t);
-        ret = mofs_write_inode(parent_inode_num, &parent_inode);
+    if (ret == 0) {
+        if (!found_reusable) {
+            /* Only true append consumes logical size; tombstone reuse keeps size. */
+            parent_inode.i_size += sizeof(mofs_dirent_t);
+        }
+        ret = mofs_inode_stamp_now(&parent_inode, MOFS_INODE_TIME_MTIME | MOFS_INODE_TIME_CTIME);
+        if (ret == 0) {
+            ret = mofs_write_inode(parent_inode_num, &parent_inode);
+        }
         if (ret != 0) {
             goto rollback_alloc;
         }
@@ -601,6 +611,10 @@ int mofs_mkdir_core(const char *path, mode_t mode)
     child_inode.i_mode  = (uint16_t)(MOFS_FTYPE_DIR | (mode & 0777U));
     child_inode.i_uid   = user.uid;
     child_inode.i_gid   = user.gid;
+    ret                 = mofs_inode_stamp_now(&child_inode, MOFS_INODE_TIME_ALL);
+    if (ret != 0) {
+        goto rollback;
+    }
     ret = mofs_write_inode(child_inode_num, &child_inode);
     if (ret != 0) {
         goto rollback;
@@ -622,7 +636,11 @@ int mofs_mkdir_core(const char *path, mode_t mode)
         goto rollback;
     }
     child_inode.i_size = ctx.sp_blk.blk_size;
-    ret                = mofs_write_inode(child_inode_num, &child_inode);
+    ret                = mofs_inode_stamp_now(&child_inode, MOFS_INODE_TIME_MTIME | MOFS_INODE_TIME_CTIME);
+    if (ret != 0) {
+        goto rollback;
+    }
+    ret = mofs_write_inode(child_inode_num, &child_inode);
     if (ret != 0) {
         goto rollback;
     }
@@ -638,7 +656,11 @@ int mofs_mkdir_core(const char *path, mode_t mode)
         goto rollback;
     }
     parent_inode.i_links = parent_inode.i_links + 1U;
-    ret                  = mofs_write_inode(path_info.parent_inode_num, &parent_inode);
+    ret                  = mofs_inode_stamp_now(&parent_inode, MOFS_INODE_TIME_CTIME);
+    if (ret != 0) {
+        goto rollback;
+    }
+    ret = mofs_write_inode(path_info.parent_inode_num, &parent_inode);
     if (ret != 0) {
         goto rollback;
     }
@@ -742,6 +764,10 @@ int mofs_rmdir_core(const char *path)
         return MOFS_EIO;
     }
     parent_inode.i_links = parent_inode.i_links - 1U;
+    ret                  = mofs_inode_stamp_now(&parent_inode, MOFS_INODE_TIME_CTIME);
+    if (ret != 0) {
+        return ret;
+    }
     return mofs_write_inode(path_info.parent_inode_num, &parent_inode);
 }
 

@@ -4,7 +4,48 @@
 #include <mofs_errno.h>
 #include <mofs_inode.h>
 #include <mofs_mem.h>
+#include <mofs_time.h>
 #include <mofs_type.h>
+
+/**
+ * @brief Update selected inode timestamp fields to the current time.
+ *
+ * Function behavior:
+ * - Obtains current time via `mofs_now()`.
+ * - Updates fields selected by `mask` (`MOFS_INODE_TIME_*`).
+ *
+ * @param[in,out] inode Inode structure to update in place.
+ * @param[in] mask Bitmask of `MOFS_INODE_TIME_*` values.
+ * @return 0 on success.
+ * @return MOFS_EINVAL if `inode` is NULL or `mask` is zero.
+ * @return Non-zero errno value propagated from `mofs_now()`.
+ */
+int mofs_inode_stamp_now(mofs_inode_t *inode, unsigned int mask)
+{
+    mofs_time_sec_t now = MOFS_TIME_INVALID;
+    int             ret = 0;
+
+    if ((inode == NULL) || (mask == 0U)) {
+        return MOFS_EINVAL;
+    }
+
+    ret = mofs_now(&now);
+    if (ret != 0) {
+        return ret;
+    }
+
+    if ((mask & MOFS_INODE_TIME_ATIME) != 0U) {
+        inode->i_atime = now;
+    }
+    if ((mask & MOFS_INODE_TIME_MTIME) != 0U) {
+        inode->i_mtime = now;
+    }
+    if ((mask & MOFS_INODE_TIME_CTIME) != 0U) {
+        inode->i_ctime = now;
+    }
+
+    return 0;
+}
 
 /**
  * @brief Set or clear one bit in the inode bitmap.

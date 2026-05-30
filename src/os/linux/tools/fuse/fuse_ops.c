@@ -205,6 +205,9 @@ int mofs_getattr_fuse(const char *path, struct stat *stbuf, struct fuse_file_inf
         stbuf->st_mode  = stat.st_mode;
         stbuf->st_uid   = stat.st_uid;
         stbuf->st_gid   = stat.st_gid;
+        stbuf->st_atime = stat.st_atime_sec;
+        stbuf->st_mtime = stat.st_mtime_sec;
+        stbuf->st_ctime = stat.st_ctime_sec;
         return 0;
     }
     return -errno;

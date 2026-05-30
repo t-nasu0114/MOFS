@@ -296,6 +296,10 @@ int mofs_create_core(const char *path, mode_t mode, int *inode_num)
     inode_buf.i_mode  = (uint16_t)(MOFS_FTYPE_REG | (mode & 0777U));
     inode_buf.i_uid   = user.uid;
     inode_buf.i_gid   = user.gid;
+    ret               = mofs_inode_stamp_now(&inode_buf, MOFS_INODE_TIME_ALL);
+    if (ret != 0) {
+        goto rollback;
+    }
 
     ret = mofs_write_inode(allocated_inode_num, &inode_buf);
     if (ret != 0) {
@@ -725,6 +729,12 @@ int mofs_read_core(mofs_filehandle_t **handle, void *buf, size_t size, off_t *of
         if (update_offset) {
             (*handle)->file_offset = (unsigned int)(*offset + (off_t)(*read_size));
         }
+        if ((*read_size) > 0U) {
+            ret = mofs_inode_stamp_now(&inode, MOFS_INODE_TIME_ATIME);
+            if (ret == 0) {
+                ret = mofs_write_inode((*handle)->inode_num, &inode);
+            }
+        }
     }
 
 out:
@@ -920,9 +930,11 @@ int mofs_write_core(mofs_filehandle_t **handle, const void *buf, size_t size, of
     write_end_offset = (uint64_t)(*offset) + (uint64_t)(*written_size);
     if ((ret == 0) && (write_end_offset > (uint64_t)inode.i_size)) {
         inode.i_size = (uint32_t)write_end_offset;
-        ret          = mofs_write_inode((*handle)->inode_num, &inode);
-        if (ret != 0) {
-            goto out;
+    }
+    if ((ret == 0) && ((*written_size) > 0U)) {
+        ret = mofs_inode_stamp_now(&inode, MOFS_INODE_TIME_MTIME | MOFS_INODE_TIME_CTIME);
+        if (ret == 0) {
+            ret = mofs_write_inode((*handle)->inode_num, &inode);
         }
     }
 
@@ -1165,7 +1177,10 @@ static int truncate_inode(int inode_num, uint32_t new_size)
         }
         if (ret == 0) {
             inode.i_size = new_size;
-            ret          = mofs_write_inode(inode_num, &inode);
+            ret          = mofs_inode_stamp_now(&inode, MOFS_INODE_TIME_MTIME | MOFS_INODE_TIME_CTIME);
+            if (ret == 0) {
+                ret = mofs_write_inode(inode_num, &inode);
+            }
         }
     } else {
         /* Grow: allocate blocks if needed, then zero-fill [old_size, new_size). */
@@ -1190,7 +1205,10 @@ static int truncate_inode(int inode_num, uint32_t new_size)
         }
 
         inode.i_size = new_size;
-        ret          = mofs_write_inode(inode_num, &inode);
+        ret          = mofs_inode_stamp_now(&inode, MOFS_INODE_TIME_MTIME | MOFS_INODE_TIME_CTIME);
+        if (ret == 0) {
+            ret = mofs_write_inode(inode_num, &inode);
+        }
         if (ret != 0) {
             goto rollback;
         }
@@ -1279,6 +1297,9 @@ int mofs_stat_core(const char *path, mofs_stat_t *stbuf)
                 stbuf->st_mode  = inode.i_mode;
                 stbuf->st_uid   = inode.i_uid;
                 stbuf->st_gid   = inode.i_gid;
+                stbuf->st_atime_sec = (int64_t)inode.i_atime;
+                stbuf->st_mtime_sec = (int64_t)inode.i_mtime;
+                stbuf->st_ctime_sec = (int64_t)inode.i_ctime;
             }
         }
     }
