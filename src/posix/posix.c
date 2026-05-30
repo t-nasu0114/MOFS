@@ -7,6 +7,7 @@
 #include <mofs_dir.h>
 #include <mofs_errno.h>
 #include <mofs_file.h>
+#include <mofs_path.h>
 #include <mofs_posix.h>
 
 /**
@@ -290,6 +291,76 @@ int mofs_pwrite(mofs_filehandle_t *handle, const void *buf, size_t size, off_t o
     }
 
     return ret;
+}
+
+/**
+ * @brief Truncate a file to the specified length in POSIX layer.
+ *
+ * Function behavior:
+ * - Resolves inode number from path via `mofs_path_to_inode_num()`.
+ * - Calls `mofs_truncate_core()` to update file size.
+ * - Converts MOFS error code to OS errno on failure.
+ *
+ * @param[in] path NULL-terminated file path string.
+ * @param[in] length New file size in bytes.
+ * @return 0 on success.
+ * @return -1 on failure (with `errno` updated).
+ */
+int mofs_truncate(const char *path, off_t length)
+{
+    int inode_num = -1;
+    int err       = 0;
+
+    /* Resolve path to inode; ENOENT and similar errors stay in MOFS errno space until conversion. */
+    err = mofs_path_to_inode_num(path, &inode_num);
+    if (err != 0) {
+        errno = mofs_to_os_errno(err);
+        return -1;
+    }
+
+    err = mofs_truncate_core(inode_num, length);
+    if (err != 0) {
+        errno = mofs_to_os_errno(err);
+        return -1;
+    }
+
+    return 0;
+}
+
+/**
+ * @brief Truncate an opened file to the specified length in POSIX layer.
+ *
+ * Function behavior:
+ * - Validates handle and confirms the handle is opened for writing.
+ * - Calls `mofs_truncate_core()` with the handle inode number.
+ * - Converts MOFS error code to OS errno on failure.
+ *
+ * @param[in] handle Opened file handle.
+ * @param[in] length New file size in bytes.
+ * @return 0 on success.
+ * @return -1 on failure (with `errno` updated).
+ */
+int mofs_ftruncate(mofs_filehandle_t *handle, off_t length)
+{
+    int err = 0;
+
+    if ((handle == NULL) || (handle->used == false)) {
+        errno = EBADF;
+        return -1;
+    }
+    /* POSIX ftruncate(2) requires a descriptor opened for writing. */
+    if ((handle->open_flags & MOFS_OFLAG_WRONLY) == 0) {
+        errno = EBADF;
+        return -1;
+    }
+
+    err = mofs_truncate_core(handle->inode_num, length);
+    if (err != 0) {
+        errno = mofs_to_os_errno(err);
+        return -1;
+    }
+
+    return 0;
 }
 
 /**

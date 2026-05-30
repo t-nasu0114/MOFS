@@ -15,6 +15,9 @@ mofs_filehandle_t filehandle_pool[MOFS_FILEHANDLE_POOL_SIZE];
 
 /* internal functions */
 static int check_open_permission(int flags, mofs_user_ctx_t *user, mofs_inode_t *inode);
+static int zero_partial_block_tail(int inode_num, unsigned int blk_idx, size_t tail_start);
+static int zero_file_byte_range(int inode_num, uint32_t from_off, uint32_t to_off);
+static int truncate_inode(int inode_num, uint32_t new_size);
 
 static int get_free_filehandle_index(void)
 {
@@ -72,7 +75,8 @@ int read_file_data_block(int inode_num, void *buf, unsigned int start_blk_num, u
                 ret = MOFS_EINVAL;
             } else if (((inode_buf.i_size + ctx.sp_blk.blk_size - 1) / ctx.sp_blk.blk_size) <= start_blk_num) {
                 ret = MOFS_EINVAL;
-            } else if (start_blk_num + req_blk_num > (inode_buf.i_size + ctx.sp_blk.blk_size - 1) / ctx.sp_blk.blk_size) {
+            } else if (start_blk_num + req_blk_num >
+                       (inode_buf.i_size + ctx.sp_blk.blk_size - 1) / ctx.sp_blk.blk_size) {
                 req_blk_num = (inode_buf.i_size + ctx.sp_blk.blk_size - 1) / ctx.sp_blk.blk_size - start_blk_num;
             }
         }
@@ -704,8 +708,8 @@ int mofs_read_core(mofs_filehandle_t **handle, void *buf, size_t size, off_t *of
         ret = get_errno();
         goto out;
     }
-    ret = read_file_data_block((*handle)->inode_num, buf_tmp, (*offset) / ctx.sp_blk.blk_size, req_blk_num, &read_blk_num,
-                               &fraction);
+    ret = read_file_data_block((*handle)->inode_num, buf_tmp, (*offset) / ctx.sp_blk.blk_size, req_blk_num,
+                               &read_blk_num, &fraction);
     if (ret != 0) {
         goto out;
     } else {
@@ -831,7 +835,7 @@ int mofs_write_core(mofs_filehandle_t **handle, const void *buf, size_t size, of
 
     start_blk_num    = (unsigned int)((uint64_t)(*offset) / (uint64_t)ctx.sp_blk.blk_size);
     write_pos_in_blk = (size_t)((uint64_t)(*offset) % (uint64_t)ctx.sp_blk.blk_size);
-    req_blk_num      = (unsigned int)((write_pos_in_blk + write_size_req + ctx.sp_blk.blk_size - 1U) / ctx.sp_blk.blk_size);
+    req_blk_num = (unsigned int)((write_pos_in_blk + write_size_req + ctx.sp_blk.blk_size - 1U) / ctx.sp_blk.blk_size);
 
     current_blk_num = (old_size + ctx.sp_blk.blk_size - 1U) / ctx.sp_blk.blk_size;
     if (start_blk_num + req_blk_num > current_blk_num) {
@@ -859,7 +863,7 @@ int mofs_write_core(mofs_filehandle_t **handle, const void *buf, size_t size, of
     current_blk_num = (old_size + ctx.sp_blk.blk_size - 1U) / ctx.sp_blk.blk_size;
     for (unsigned int i = 0U; i < req_blk_num; i++) {
         unsigned int file_blk_num = start_blk_num + i;
-        unsigned int abs_blk_num = 0U;
+        unsigned int abs_blk_num  = 0U;
         if (file_blk_num >= current_blk_num) {
             continue;
         }
@@ -934,6 +938,306 @@ out:
         mofs_free(buf_tmp);
     }
     return ret;
+}
+
+/**
+ * @brief Fill the tail bytes of one data block with zeros on shrink truncate.
+ *
+ * Function behavior:
+ * - Resolves the absolute block number for the given file-relative block index.
+ * - Reads one full block, zero-fills from `tail_start` to block end, and writes it back.
+ * - Used when truncate leaves a partial last block that must not expose stale data.
+ *
+ * @param[in] inode_num Target file inode number.
+ * @param[in] blk_idx File-relative data block index to modify.
+ * @param[in] tail_start Byte offset within the block from which to zero.
+ * @return 0 on success.
+ * @return MOFS_EINVAL if `tail_start` is out of block range.
+ * @return MOFS_EIO if block read/write does not complete as expected.
+ * @return Other non-zero errno values propagated from lower layers.
+ */
+static int zero_partial_block_tail(int inode_num, unsigned int blk_idx, size_t tail_start)
+{
+    int          ret              = 0;
+    void        *buf              = NULL;
+    unsigned int abs_blk_num      = 0U;
+    unsigned int read_blk_num     = 0U;
+    unsigned int written_blk_num  = 0U;
+    size_t       fraction         = 0U;
+    size_t       written_fraction = 0U;
+
+    if (tail_start >= ctx.sp_blk.blk_size) {
+        return MOFS_EINVAL;
+    }
+
+    buf = mofs_malloc(ctx.sp_blk.blk_size);
+    if (buf == NULL) {
+        return get_errno();
+    }
+
+    /* Logical block index -> absolute data block via on-disk list nodes. */
+    ret = resolve_file_data_block(inode_num, blk_idx, &abs_blk_num);
+    if (ret != 0) {
+        goto out;
+    }
+
+    ret = read_continuous_blocks(ctx.dev_fd, buf, 1U, abs_blk_num, &read_blk_num, &fraction);
+    if ((ret != 0) || (read_blk_num != 1U) || (fraction != 0U)) {
+        ret = MOFS_EIO;
+        goto out;
+    }
+
+    /* Discard bytes beyond the new EOF inside the retained last block. */
+    mofs_memset((char *)buf + tail_start, 0, ctx.sp_blk.blk_size - tail_start);
+
+    ret = write_continuous_blocks(ctx.dev_fd, buf, 1U, abs_blk_num, &written_blk_num, &written_fraction);
+    if ((ret != 0) || (written_blk_num != 1U) || (written_fraction != 0U)) {
+        ret = MOFS_EIO;
+    }
+
+out:
+    if (buf != NULL) {
+        mofs_free(buf);
+    }
+    return ret;
+}
+
+/**
+ * @brief Fill a byte range with zeros inside an already extended and mapped as a file.
+ *
+ * Function behavior:
+ * - Covers `[from_off, to_off)` with block-based read-modify-write.
+ * - Preloads existing block contents for overlapping regions before zeroing.
+ * - Writes back all blocks spanned by the requested range.
+ * - Used when truncate grows a file so the extended area reads as zero-filled.
+ *
+ * @param[in] inode_num Target file inode number.
+ * @param[in] from_off Start byte offset (inclusive).
+ * @param[in] to_off End byte offset (exclusive).
+ * @return 0 on success.
+ * @return MOFS_EINVAL if arguments are invalid.
+ * @return MOFS_EIO if block read/write does not complete as expected.
+ * @return Other non-zero errno values propagated from lower layers.
+ */
+static int zero_file_byte_range(int inode_num, uint32_t from_off, uint32_t to_off)
+{
+    int          ret = 0;
+    mofs_inode_t inode;
+    void        *buf_tmp         = NULL;
+    size_t       fraction        = 0U;
+    unsigned int read_blk_num    = 0U;
+    unsigned int written_blk_num = 0U;
+    unsigned int start_blk_num   = 0U;
+    unsigned int req_blk_num     = 0U;
+    unsigned int current_blk_num = 0U;
+    uint32_t     old_size        = 0U;
+
+    if (from_off >= to_off) {
+        return 0;
+    }
+
+    ret = mofs_read_inode(inode_num, &inode);
+    if (ret != 0) {
+        return ret;
+    }
+    old_size = inode.i_size;
+
+    /* Compute the block span that covers [from_off, to_off). */
+    start_blk_num = from_off / ctx.sp_blk.blk_size;
+    req_blk_num   = ((to_off - 1U) / ctx.sp_blk.blk_size) - start_blk_num + 1U;
+
+    buf_tmp = mofs_malloc((size_t)req_blk_num * ctx.sp_blk.blk_size);
+    if (buf_tmp == NULL) {
+        return get_errno();
+    }
+    mofs_memset(buf_tmp, 0, (size_t)req_blk_num * ctx.sp_blk.blk_size);
+
+    /* Preload overlapping existing blocks (read-modify-write) via list mapping. */
+    current_blk_num = (old_size + ctx.sp_blk.blk_size - 1U) / ctx.sp_blk.blk_size;
+    for (unsigned int i = 0U; i < req_blk_num; i++) {
+        unsigned int file_blk_num = start_blk_num + i;
+        unsigned int abs_blk_num  = 0U;
+
+        if (file_blk_num >= current_blk_num) {
+            continue;
+        }
+        ret = resolve_file_data_block(inode_num, file_blk_num, &abs_blk_num);
+        if (ret != 0) {
+            goto out;
+        }
+        ret = read_continuous_blocks(ctx.dev_fd, (char *)buf_tmp + (size_t)i * ctx.sp_blk.blk_size, 1U, abs_blk_num,
+                                     &read_blk_num, &fraction);
+        if ((ret != 0) || (read_blk_num != 1U) || (fraction != 0U)) {
+            ret = MOFS_EIO;
+            goto out;
+        }
+    }
+
+    /* Zero only the target sub-range within the assembled block buffer. */
+    {
+        uint64_t start_off     = (uint64_t)start_blk_num * (uint64_t)ctx.sp_blk.blk_size;
+        uint64_t zero_from_off = ((uint64_t)from_off > start_off) ? (uint64_t)from_off : start_off;
+        uint64_t zero_to_off   = (uint64_t)to_off;
+        if (zero_to_off > zero_from_off) {
+            size_t zero_from_inbuf = (size_t)(zero_from_off - start_off);
+            size_t zero_size       = (size_t)(zero_to_off - zero_from_off);
+            mofs_memset((char *)buf_tmp + zero_from_inbuf, 0, zero_size);
+        }
+    }
+
+    ret = write_file_data_block(inode_num, buf_tmp, start_blk_num, req_blk_num, &written_blk_num, &fraction);
+
+out:
+    if (buf_tmp != NULL) {
+        mofs_free(buf_tmp);
+    }
+    return ret;
+}
+
+/**
+ * @brief Apply truncate semantics to one regular-file inode.
+ *
+ * Function behavior:
+ * - Validates inode type and caller write permission.
+ * - Shrinks by zeroing a partial tail block, freeing trailing blocks, and updating `i_size`.
+ * - Grows by allocating additional blocks, zero-filling the extended range, and updating `i_size`.
+ * - Rolls back newly allocated blocks if a grow operation fails after allocation.
+ *
+ * @param[in] inode_num Target regular-file inode number.
+ * @param[in] new_size New file size in bytes.
+ * @return 0 on success.
+ * @return MOFS_EISDIR if target inode is a directory.
+ * @return MOFS_EPERM or MOFS_EACCES if caller has no write permission.
+ * @return Other non-zero errno values propagated from lower layers.
+ */
+static int truncate_inode(int inode_num, uint32_t new_size)
+{
+    int             ret = 0;
+    mofs_inode_t    inode;
+    mofs_user_ctx_t user;
+    uint32_t        old_size         = 0U;
+    unsigned int    old_nr_blocks    = 0U;
+    unsigned int    keep_blks        = 0U;
+    unsigned int    needed_blks      = 0U;
+    unsigned int    alloc_start_blk  = 0U;
+    unsigned int    required_blk_num = 0U;
+    bool            alloc_done       = false;
+
+    ret = mofs_read_inode(inode_num, &inode);
+    if (ret != 0) {
+        return ret;
+    }
+
+    if ((inode.i_mode & MOFS_FTYPE_DIR) != 0U) {
+        return MOFS_EISDIR;
+    }
+
+    ret = mofs_get_caller_user(&user);
+    if (ret != 0) {
+        return ret;
+    } else if (user.valid == false) {
+        return MOFS_EPERM;
+    }
+    ret = check_open_permission(MOFS_OFLAG_WRONLY, &user, &inode);
+    if (ret != 0) {
+        return ret;
+    }
+
+    old_size      = inode.i_size;
+    old_nr_blocks = inode.i_nr_blocks;
+    if (new_size == old_size) {
+        return 0;
+    }
+
+    if (new_size < old_size) {
+        /* Shrink: retain ceil(new_size / blk_size) data blocks at the front. */
+        keep_blks = (new_size == 0U) ? 0U : (new_size + ctx.sp_blk.blk_size - 1U) / ctx.sp_blk.blk_size;
+
+        if ((new_size > 0U) && ((new_size % ctx.sp_blk.blk_size) != 0U) && (keep_blks > 0U)) {
+            ret = zero_partial_block_tail(inode_num, keep_blks - 1U, new_size % ctx.sp_blk.blk_size);
+        }
+        if ((ret == 0) && (keep_blks < old_nr_blocks)) {
+            /* Release file data blocks beyond the retained prefix. */
+            ret = free_data_block(inode_num, keep_blks, old_nr_blocks - keep_blks);
+        }
+        if (ret == 0) {
+            ret = mofs_read_inode(inode_num, &inode);
+        }
+        if (ret == 0) {
+            inode.i_size = new_size;
+            ret          = mofs_write_inode(inode_num, &inode);
+        }
+    } else {
+        /* Grow: allocate blocks if needed, then zero-fill [old_size, new_size). */
+        needed_blks = (new_size + ctx.sp_blk.blk_size - 1U) / ctx.sp_blk.blk_size;
+        if (needed_blks > inode.i_nr_blocks) {
+            required_blk_num = needed_blks - inode.i_nr_blocks;
+            alloc_start_blk  = inode.i_nr_blocks;
+            ret              = allocate_data_block(inode_num, required_blk_num);
+            if (ret != 0) {
+                return ret;
+            }
+            alloc_done = true;
+            ret        = mofs_read_inode(inode_num, &inode);
+            if (ret != 0) {
+                goto rollback;
+            }
+        }
+
+        ret = zero_file_byte_range(inode_num, old_size, new_size);
+        if (ret != 0) {
+            goto rollback;
+        }
+
+        inode.i_size = new_size;
+        ret          = mofs_write_inode(inode_num, &inode);
+        if (ret != 0) {
+            goto rollback;
+        }
+    }
+
+    return ret;
+
+rollback:
+    if (alloc_done) {
+        (void)free_data_block(inode_num, alloc_start_blk, required_blk_num);
+    }
+    return ret;
+}
+
+/**
+ * @brief Truncate a regular file to the specified length in MOFS core layer.
+ *
+ * Function behavior:
+ * - Validates inode number and target length against max file size.
+ * - Rejects directory inodes and verifies caller write permission.
+ * - Shrinks by freeing trailing data blocks and zeroing partial tail bytes.
+ * - Grows by allocating blocks and zero-filling the extended range.
+ * - Updates inode `i_size` on success.
+ *
+ * @param[in] inode_num Target regular-file inode number.
+ * @param[in] length New file size in bytes.
+ * @return 0 on success.
+ * @return MOFS_EINVAL if arguments are invalid.
+ * @return MOFS_EFBIG if length exceeds max file size.
+ * @return MOFS_EISDIR if target inode is a directory.
+ * @return MOFS_EPERM or MOFS_EACCES if caller has no write permission.
+ * @return Other non-zero errno values propagated from lower layers.
+ */
+int mofs_truncate_core(int inode_num, off_t length)
+{
+    /* Reject invalid inode and negative length before touching on-disk metadata. */
+    if (inode_num < 0) {
+        return MOFS_EINVAL;
+    }
+    if (length < 0) {
+        return MOFS_EINVAL;
+    }
+    if ((uint64_t)length > mofs_max_file_bytes()) {
+        return MOFS_EFBIG;
+    }
+
+    return truncate_inode(inode_num, (uint32_t)length);
 }
 
 /**
