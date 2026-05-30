@@ -1,8 +1,8 @@
 #ifndef __MOFS_POSIX_DIRENT__
 #define __MOFS_POSIX_DIRENT__
 
-#include <posix/limits.h>
 #include <mofs_type.h>
+#include <posix/mofs_limits.h>
 
 typedef struct mofs_dirent
 {

@@ -30,6 +30,7 @@ struct fuse_operations op = {
     .init    = mofs_init_fuse,
     .destroy = mofs_destroy_fuse,
     .getattr = mofs_getattr_fuse,
+    .truncate = mofs_truncate_fuse,
     .mkdir   = mofs_mkdir_fuse,
     .rmdir   = mofs_rmdir_fuse,
     .unlink  = mofs_unlink_fuse,
@@ -51,18 +52,28 @@ static int build_mofs_open_args(int fuse_flags, mode_t requested_mode, bool forc
         return MOFS_EINVAL;
     }
 
-    switch (fuse_flags & O_ACCMODE) {
-    case O_RDONLY:
-        flags = MOFS_OFLAG_RDONLY;
-        break;
-    case O_WRONLY:
-        flags = MOFS_OFLAG_WRONLY;
-        break;
-    case O_RDWR:
-        flags = MOFS_OFLAG_RDWR;
-        break;
-    default:
-        return MOFS_EINVAL;
+#if defined(O_PATH)
+    if ((fuse_flags & O_PATH) != 0) {
+        if (((fuse_flags & O_ACCMODE) != 0) && ((fuse_flags & O_ACCMODE) != O_RDONLY)) {
+            return MOFS_EINVAL;
+        }
+        flags = MOFS_OFLAG_SEARCH;
+    } else
+#endif
+    {
+        switch (fuse_flags & O_ACCMODE) {
+        case O_RDONLY:
+            flags = MOFS_OFLAG_RDONLY;
+            break;
+        case O_WRONLY:
+            flags = MOFS_OFLAG_WRONLY;
+            break;
+        case O_RDWR:
+            flags = MOFS_OFLAG_RDWR;
+            break;
+        default:
+            return MOFS_EINVAL;
+        }
     }
 
 #ifdef O_DIRECTORY
@@ -204,9 +215,45 @@ int mofs_getattr_fuse(const char *path, struct stat *stbuf, struct fuse_file_inf
         stbuf->st_mode  = stat.st_mode;
         stbuf->st_uid   = stat.st_uid;
         stbuf->st_gid   = stat.st_gid;
+        stbuf->st_atime = stat.st_atime_sec;
+        stbuf->st_mtime = stat.st_mtime_sec;
+        stbuf->st_ctime = stat.st_ctime_sec;
         return 0;
     }
     return -errno;
+}
+
+/**
+ * @brief Change the size of a file for a path.
+ *
+ * Function behavior:
+ * - Calls `mofs_truncate()` or `mofs_ftruncate()` depending on open handle availability.
+ * - Uses an open file handle from `fi->fh` when available.
+ *
+ * @param[in] path Target path string.
+ * @param[in] size New file size in bytes.
+ * @param[in] fi FUSE file info that may hold an open handle.
+ * @return 0 on success.
+ * @return Negative errno value on failure.
+ */
+int mofs_truncate_fuse(const char *path, off_t size, struct fuse_file_info *fi)
+{
+    mofs_fuse_bind_request_caller();
+
+    if (path == NULL) {
+        return -(mofs_to_os_errno(MOFS_EINVAL));
+    }
+
+    /* Prefer ftruncate when FUSE passes an open handle (e.g. ftruncate(2) on open fd). */
+    if ((fi != NULL) && (fi->fh != 0U)) {
+        if (mofs_ftruncate((mofs_filehandle_t *)(uintptr_t)fi->fh, size) != 0) {
+            return -errno;
+        }
+    } else if (mofs_truncate(path, size) != 0) {
+        return -errno;
+    }
+
+    return 0;
 }
 
 /**

@@ -41,9 +41,22 @@ static inline int mofs_validate_logical_blk_size(uint32_t blk_size)
     return 0;
 }
 
-/* inode */
+/* inode / file data blocks */
 
-#define MOFS_DATA_BLK_PER_FILE 12U /* Max block number for one file */
+#define MOFS_MAX_FILE_DATA_BLOCKS 1024U /* Max data blocks per file (list nodes excluded) */
+
+/** Number of file data pointers that fit in one on-disk list node block. */
+static inline unsigned int mofs_list_ptrs_per_node(uint32_t blk_size)
+{
+    unsigned int hdr_bytes = 8U; /* mofs_data_list_hdr: next_abs + nr_ptrs */
+    if (blk_size <= hdr_bytes) {
+        return 0U;
+    }
+    return (blk_size - hdr_bytes) / 4U;
+}
+
+/** Maximum file size in bytes after mount (`MOFS_MAX_FILE_DATA_BLOCKS * blk_size`). */
+uint64_t mofs_max_file_bytes(void);
 
 /* Bool type */
 #ifndef bool
@@ -94,17 +107,30 @@ typedef struct mofs_superblock
     uint32_t blk_size; /* Logical block size in bytes */
 } mofs_superblock_t;
 
-/* Inode (64byte aligned) */
+/* On-disk list node header (one per list block in data region) */
+typedef struct mofs_data_list_hdr
+{
+    uint32_t next_abs; /* Absolute block of next list node, 0 if none */
+    uint32_t nr_ptrs;  /* Number of valid data block pointers following header */
+} mofs_data_list_hdr_t;
+
+/* Inode (64 bytes on disk) */
 typedef struct mofs_inode
 {
-    uint32_t i_size;  /* File size in bytes */
-    uint16_t i_links; /* Link count */
-    uint16_t i_mode;  /* Permission and file type */
-    uint32_t i_uid;   /* User ID */
-    uint32_t i_gid;   /* Group ID */
-
-    uint32_t i_data_blk[MOFS_DATA_BLK_PER_FILE]; /* Absolute block number of data blocks */
+    uint32_t i_size;      /* File size in bytes */
+    uint16_t i_links;     /* Link count */
+    uint16_t i_mode;      /* Permission and file type */
+    uint32_t i_uid;       /* User ID */
+    uint32_t i_gid;       /* Group ID */
+    uint32_t i_data_head; /* Absolute block of first list node, 0 if no data mapping */
+    uint32_t i_nr_blocks; /* Number of file data blocks (not list nodes) */
+    uint64_t i_atime;     /* Last access time (Unix epoch seconds) */
+    uint64_t i_mtime;     /* Last modification time (Unix epoch seconds) */
+    uint64_t i_ctime;     /* Last status change time (Unix epoch seconds) */
+    uint32_t reserved[4]; /* Padding to 64 bytes */
 } mofs_inode_t;
+
+typedef char mofs_inode_size_must_be_64[(sizeof(mofs_inode_t) == 64U) ? 1 : -1];
 
 /***************************
  * Context

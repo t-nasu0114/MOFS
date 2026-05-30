@@ -3,6 +3,7 @@
 #include <mofs_devio.h>
 #include <mofs_file.h>
 #include <mofs_mem.h>
+#include <mofs_time.h>
 #include <mofs_type.h>
 #include <mofs_util.h>
 
@@ -175,8 +176,8 @@ int mofs_format(const char *device_file, int fs_size, int blk_size)
         goto out2;
     }
 
-    /* Allocate the first data block for root directory and mark it as used in data bitmap */
-    uint8_t root_data_bitmap = 0x01; /* Mark the No.0 data block as used */
+    /* Allocate data block 0 (dir content) and block 1 (list node); mark both used */
+    uint8_t root_data_bitmap = 0x03;
     if (dev_lseek(fd, (off_t)((uint64_t)superblock.data_bitmap_start * (uint64_t)eff_blk_bytes), MOFS_SEEK_SET) < 0) {
         MOFS_ERR("Seek error at root data bitmap");
         ret = get_errno();
@@ -196,15 +197,69 @@ int mofs_format(const char *device_file, int fs_size, int blk_size)
         goto out2;
     }
 
+    /* List node at data block 1 points to directory data block 0. */
+    ret = clear_blocks(fd, superblock.data_region_start + 1ULL, eff_blk_bytes);
+    if (ret != 0) {
+        MOFS_ERR("Clear error at root list node block");
+        goto out2;
+    }
+
+    {
+        void                  *list_buf = mofs_malloc((size_t)eff_blk_bytes);
+        mofs_data_list_hdr_t  *list_hdr;
+        uint32_t              *list_ptr;
+
+        if (list_buf == NULL) {
+            ret = get_errno();
+            goto out2;
+        }
+        mofs_memset(list_buf, 0, (size_t)eff_blk_bytes);
+        list_hdr           = (mofs_data_list_hdr_t *)list_buf;
+        list_hdr->next_abs = 0U;
+        list_hdr->nr_ptrs  = 1U;
+        /* Single pointer: root directory content block. */
+        list_ptr           = (uint32_t *)((unsigned char *)list_buf + sizeof(mofs_data_list_hdr_t));
+        list_ptr[0]        = superblock.data_region_start;
+
+        if (dev_lseek(fd,
+                      (off_t)((uint64_t)(superblock.data_region_start + 1ULL) * (uint64_t)eff_blk_bytes),
+                      MOFS_SEEK_SET) < 0) {
+            MOFS_ERR("Seek error at root list node");
+            ret = get_errno();
+            mofs_free(list_buf);
+            goto out2;
+        }
+        if (dev_write(fd, list_buf, (size_t)eff_blk_bytes) != (int)(size_t)eff_blk_bytes) {
+            MOFS_ERR("Write error at root list node");
+            ret = get_errno();
+            mofs_free(list_buf);
+            goto out2;
+        }
+        mofs_free(list_buf);
+    }
+
     /* Write root inode to No.2 inode in table */
     mofs_inode_t root_inode;
     mofs_memset(&root_inode, 0, sizeof(root_inode));
-    root_inode.i_size        = eff_blk_bytes; /* One block initially */
-    root_inode.i_mode        = MOFS_FTYPE_DIR | 0755;
-    root_inode.i_links       = 2;
-    root_inode.i_uid         = 0;
-    root_inode.i_gid         = 0;
-    root_inode.i_data_blk[0] = superblock.data_region_start;
+    root_inode.i_size      = eff_blk_bytes;
+    root_inode.i_mode      = MOFS_FTYPE_DIR | 0755;
+    root_inode.i_links     = 2;
+    root_inode.i_uid       = 0;
+    root_inode.i_gid       = 0;
+    root_inode.i_data_head = superblock.data_region_start + 1U;
+    root_inode.i_nr_blocks = 1U;
+    {
+        mofs_time_sec_t now = MOFS_TIME_INVALID;
+
+        ret = mofs_now(&now);
+        if (ret != 0) {
+            MOFS_ERR("Failed to set root inode timestamps");
+            goto out2;
+        }
+        root_inode.i_atime = now;
+        root_inode.i_mtime = now;
+        root_inode.i_ctime = now;
+    }
 
     if (dev_lseek(fd,
                   (off_t)((uint64_t)superblock.inode_table_start * (uint64_t)eff_blk_bytes) +

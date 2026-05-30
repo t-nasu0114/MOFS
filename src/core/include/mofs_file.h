@@ -51,5 +51,6 @@ int mofs_read_core(mofs_filehandle_t **handle, void *buf, size_t size, off_t *of
                    bool update_offset);
 int mofs_write_core(mofs_filehandle_t **handle, const void *buf, size_t size, off_t *offset, size_t *written_size,
                     bool update_offset);
+int mofs_truncate_core(int inode_num, off_t length);
 
 #endif /* __MOFS_FILE__ */

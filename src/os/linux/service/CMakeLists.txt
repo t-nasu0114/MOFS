@@ -4,6 +4,7 @@ set(OS_SERVICE_SRC_LIST
     os_errno.c
     os_mem.c
     os_str.c
+    os_time.c
     os_user.c
 )
 

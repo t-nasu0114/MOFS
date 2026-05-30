@@ -1,8 +1,33 @@
 #include <mofs_dir.h>
 #include <mofs_errno.h>
+#include <mofs_inode.h>
 #include <mofs_mem.h>
 #include <mofs_path.h>
+#include <mofs_perm.h>
 #include <mofs_str.h>
+#include <mofs_user.h>
+
+static int check_parent_traverse(bool check_access, const mofs_user_ctx_t *user, int parent_inode)
+{
+    int          ret = 0;
+    mofs_inode_t inode;
+
+    if (check_access == false) {
+        return 0;
+    }
+    if (parent_inode == MOFS_ROOT_INODE_NUM) {
+        return 0;
+    }
+
+    ret = mofs_read_inode(parent_inode, &inode);
+    if (ret != 0) {
+        return ret;
+    }
+    if ((inode.i_mode & MOFS_FTYPE_DIR) == 0U) {
+        return MOFS_ENOTDIR;
+    }
+    return mofs_check_dir_traverse(user, &inode);
+}
 
 /**
  * @brief Resolve a path with configurable output details.
@@ -10,6 +35,7 @@
  * Function behavior:
  * - Validates input path and requested resolve flags.
  * - Walks path components from root inode to the leaf parent.
+ * - Optionally verifies traverse (search) permission on each parent directory.
  * - Optionally resolves the leaf inode and/or parent inode.
  * - Optionally tolerates missing leaf component.
  *
@@ -18,21 +44,25 @@
  * @param[out] path_info Resolve result storage.
  * @return 0 on success.
  * @return MOFS_EINVAL if arguments or resolve flags are invalid.
+ * @return MOFS_EPERM if access check is requested and caller context is invalid.
+ * @return MOFS_EACCES if traverse permission is denied on a path component.
  * @return MOFS_ENAMETOOLONG if leaf component exceeds directory entry limit.
  * @return MOFS_ENOENT if path resolution fails for existing-required component.
  * @return Non-zero errno value from memory allocation failures.
  */
 int mofs_resolve_path(const char *path, unsigned int resolve_flags, mofs_path_info_t *path_info)
 {
-    int   ret          = 0;
-    int   parent_inode = MOFS_ROOT_INODE_NUM;
-    int   child_inode  = -1;
-    char *path_copy    = NULL;
-    char *current      = NULL;
-    char *next         = NULL;
-    bool  require_leaf_inode;
-    bool  require_parent;
-    bool  allow_missing_leaf;
+    int              ret          = 0;
+    int              parent_inode = MOFS_ROOT_INODE_NUM;
+    int              child_inode  = -1;
+    char            *path_copy    = NULL;
+    char            *current      = NULL;
+    char            *next         = NULL;
+    bool             require_leaf_inode;
+    bool             require_parent;
+    bool             allow_missing_leaf;
+    bool             check_access;
+    mofs_user_ctx_t  user;
 
     if ((path == NULL) || (path_info == NULL) || (path[0] != '/')) {
         return MOFS_EINVAL;
@@ -41,11 +71,22 @@ int mofs_resolve_path(const char *path, unsigned int resolve_flags, mofs_path_in
     require_leaf_inode = ((resolve_flags & MOFS_PATH_RESOLVE_INODE) != 0U);
     require_parent     = ((resolve_flags & MOFS_PATH_RESOLVE_PARENT) != 0U);
     allow_missing_leaf = ((resolve_flags & MOFS_PATH_ALLOW_MISSING_LEAF) != 0U);
+    check_access       = ((resolve_flags & MOFS_PATH_CHECK_ACCESS) != 0U);
     if ((!require_leaf_inode) && (!require_parent)) {
         return MOFS_EINVAL;
     }
     if (allow_missing_leaf && (!require_leaf_inode)) {
         return MOFS_EINVAL;
+    }
+
+    if (check_access) {
+        ret = mofs_get_caller_user(&user);
+        if (ret != 0) {
+            return ret;
+        }
+        if (user.valid == false) {
+            return MOFS_EPERM;
+        }
     }
 
     mofs_memset(path_info, 0, sizeof(mofs_path_info_t));
@@ -87,6 +128,10 @@ int mofs_resolve_path(const char *path, unsigned int resolve_flags, mofs_path_in
             }
 
             if (require_leaf_inode) {
+                ret = check_parent_traverse(check_access, &user, parent_inode);
+                if (ret != 0) {
+                    break;
+                }
                 ret = find_dir_entry(current, parent_inode, &child_inode);
                 if ((ret == 0) && (child_inode >= 0)) {
                     path_info->leaf_inode_num = child_inode;
@@ -100,6 +145,10 @@ int mofs_resolve_path(const char *path, unsigned int resolve_flags, mofs_path_in
             break;
         }
 
+        ret = check_parent_traverse(check_access, &user, parent_inode);
+        if (ret != 0) {
+            break;
+        }
         ret = find_dir_entry(current, parent_inode, &child_inode);
         if ((ret != 0) || (child_inode < 0)) {
             ret = MOFS_ENOENT;
@@ -137,7 +186,7 @@ int mofs_path_to_inode_num(const char *path, int *inode_num)
         return MOFS_EINVAL;
     }
 
-    ret = mofs_resolve_path(path, MOFS_PATH_RESOLVE_INODE, &path_info);
+    ret = mofs_resolve_path(path, MOFS_PATH_RESOLVE_INODE | MOFS_PATH_CHECK_ACCESS, &path_info);
     if (ret == 0) {
         *inode_num = path_info.leaf_inode_num;
     }
@@ -171,7 +220,7 @@ int mofs_path_to_parent_and_component(const char *path, int *parent_inode_num, c
         return MOFS_EINVAL;
     }
 
-    ret = mofs_resolve_path(path, MOFS_PATH_RESOLVE_PARENT, &path_info);
+    ret = mofs_resolve_path(path, MOFS_PATH_RESOLVE_PARENT | MOFS_PATH_CHECK_ACCESS, &path_info);
     if (ret == 0) {
         *parent_inode_num = path_info.parent_inode_num;
         mofs_strcpy(component, path_info.leaf_name);

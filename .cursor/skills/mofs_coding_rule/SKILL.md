@@ -50,7 +50,8 @@ MOFS の実装を行うときに使います。
 
 ### 2.8 コメント（Doxygen 風）
 
-- core や FUSE 層の関数には `@brief`, 本文に「Function behavior:」の箇条書き、`@param`, `@return` を付けるスタイルが使われている。
+- 基本的にすべての関数で `@brief`, 本文に「Function behavior:」の箇条書き、`@param`, `@return` を付けるスタイルが使われている。
+- 関数の中にも、処理の流れを説明するコメントを入れて可読性を上げるように務める。
 
 ### 2.9 FUSE コールバックと errno の符号
 

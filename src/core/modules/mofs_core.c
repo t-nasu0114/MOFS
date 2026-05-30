@@ -119,7 +119,11 @@ int mofs_init_core(const char *path, bool update_root_owner, uint32_t root_uid, 
         }
         root_inode.i_uid = root_uid;
         root_inode.i_gid = root_gid;
-        ret              = mofs_write_inode(MOFS_ROOT_INODE_NUM, &root_inode);
+        ret              = mofs_inode_stamp_now(&root_inode, MOFS_INODE_TIME_CTIME);
+        if (ret != 0) {
+            goto out3;
+        }
+        ret = mofs_write_inode(MOFS_ROOT_INODE_NUM, &root_inode);
         if (ret != 0) {
             goto out3;
         }
@@ -158,4 +162,18 @@ int mofs_fini_core(void)
     ctx.dev_fd   = 0;
     ctx.init     = false;
     return 0;
+}
+
+/**
+ * @brief Return the maximum file size in bytes for the mounted volume.
+ *
+ * Function behavior:
+ * - Computes `MOFS_MAX_FILE_DATA_BLOCKS * ctx.sp_blk.blk_size`.
+ * - Requires `mofs_init_core()` to have populated `ctx.sp_blk`.
+ *
+ * @return Maximum file size in bytes.
+ */
+uint64_t mofs_max_file_bytes(void)
+{
+    return (uint64_t)MOFS_MAX_FILE_DATA_BLOCKS * (uint64_t)ctx.sp_blk.blk_size;
 }
