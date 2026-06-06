@@ -1,13 +1,13 @@
 #ifndef __MOFS_POSIX_DIRENT__
 #define __MOFS_POSIX_DIRENT__
 
-#include <mofs_type.h>
+#include <mofs_types.h>
 #include <posix/mofs_limits.h>
 
 typedef struct mofs_dirent
 {
-    char     name[MOFS_FILENAME_LEN];
-    uint32_t inode_num;
+    char          name[MOFS_FILENAME_LEN];
+    mofs_uint32_t inode_num;
 } mofs_dirent_t;
 
 typedef struct mofs_dirhandle mofs_dirhandle_t;

@@ -64,7 +64,7 @@ static void test_TC_P1_012_format_then_init(void **state)
     ret = mofs_format(image_path, 0, MOFS_BLK_SIZE);
     assert_int_equal(ret, 0);
 
-    ret = mofs_init_core(image_path, false, 0U, 0U);
+    ret = mofs_init_core(image_path, MOFS_FALSE, 0U, 0U);
     assert_int_equal(ret, 0);
     assert_int_equal(mofs_fini_core(), 0);
     assert_int_equal(mofs_test_remove_file(image_path), 0);
@@ -82,7 +82,7 @@ static void test_format_blk_size_default_via_negative_one(void **state)
     ret = mofs_format(image_path, 0, -1);
     assert_int_equal(ret, 0);
 
-    ret = mofs_init_core(image_path, false, 0U, 0U);
+    ret = mofs_init_core(image_path, MOFS_FALSE, 0U, 0U);
     assert_int_equal(ret, 0);
     assert_int_equal(mofs_fini_core(), 0);
     assert_int_equal(mofs_test_remove_file(image_path), 0);
@@ -100,7 +100,7 @@ static void test_format_blk_size_512(void **state)
     ret = mofs_format(image_path, 0, 512);
     assert_int_equal(ret, 0);
 
-    ret = mofs_init_core(image_path, false, 0U, 0U);
+    ret = mofs_init_core(image_path, MOFS_FALSE, 0U, 0U);
     assert_int_equal(ret, 0);
     assert_int_equal(mofs_fini_core(), 0);
     assert_int_equal(mofs_test_remove_file(image_path), 0);
@@ -118,7 +118,7 @@ static void test_format_blk_size_4096(void **state)
     ret = mofs_format(image_path, 0, 4096);
     assert_int_equal(ret, 0);
 
-    ret = mofs_init_core(image_path, false, 0U, 0U);
+    ret = mofs_init_core(image_path, MOFS_FALSE, 0U, 0U);
     assert_int_equal(ret, 0);
     assert_int_equal(mofs_fini_core(), 0);
     assert_int_equal(mofs_test_remove_file(image_path), 0);

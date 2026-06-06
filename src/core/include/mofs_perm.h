@@ -3,7 +3,7 @@
 
 #include <mofs_core.h>
 #include <mofs_inode.h>
-#include <mofs_user.h>
+#include <mofs_port_user.h>
 #include <posix/mofs_fcntl.h>
 
 int mofs_check_open_permission(int flags, const mofs_user_ctx_t *user, const mofs_inode_t *inode);

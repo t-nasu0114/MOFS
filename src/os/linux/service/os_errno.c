@@ -1,5 +1,6 @@
 #include <errno.h>
 #include <mofs_errno.h>
+#include <mofs_port_errno.h>
 
 int get_errno(void)
 {

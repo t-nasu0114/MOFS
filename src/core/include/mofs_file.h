@@ -22,10 +22,10 @@
 /* File handle */
 struct mofs_filehandle
 {
-    bool         used;
-    int          inode_num;
-    unsigned int file_offset;
-    unsigned int open_flags;
+    mofs_bool         used;
+    int               inode_num;
+    unsigned int      file_offset;
+    unsigned int      open_flags;
 };
 
 /* File handle pool */
@@ -37,20 +37,20 @@ extern mofs_filehandle_t filehandle_pool[MOFS_FILEHANDLE_POOL_SIZE];
 
 /* internal utilities */
 int read_file_data_block(int inode_num, void *buf, unsigned int start_blk_num, unsigned int req_blk_num,
-                         unsigned int *read_blk_num, size_t *fraction);
+                         unsigned int *read_blk_num, mofs_size_t *fraction);
 int write_file_data_block(int inode_num, const void *buf, unsigned int start_blk_num, unsigned int req_blk_num,
-                          unsigned int *written_blk_num, size_t *fraction);
+                          unsigned int *written_blk_num, mofs_size_t *fraction);
 
 /* external functions */
-int mofs_open_core(const char *path, int flags, mode_t mode, mofs_filehandle_t **handle);
+int mofs_open_core(const char *path, int flags, mofs_mode_t mode, mofs_filehandle_t **handle);
 int mofs_close_core(mofs_filehandle_t **handle);
-int mofs_create_core(const char *path, mode_t mode, int *inode_num);
+int mofs_create_core(const char *path, mofs_mode_t mode, int *inode_num);
 int mofs_unlink_core(const char *path);
 int mofs_stat_core(const char *path, mofs_stat_t *stbuf);
-int mofs_read_core(mofs_filehandle_t **handle, void *buf, size_t size, off_t *offset, size_t *read_size,
-                   bool update_offset);
-int mofs_write_core(mofs_filehandle_t **handle, const void *buf, size_t size, off_t *offset, size_t *written_size,
-                    bool update_offset);
-int mofs_truncate_core(int inode_num, off_t length);
+int mofs_read_core(mofs_filehandle_t **handle, void *buf, mofs_size_t size, mofs_off_t *offset, mofs_size_t *read_size,
+                   mofs_bool update_offset);
+int mofs_write_core(mofs_filehandle_t **handle, const void *buf, mofs_size_t size, mofs_off_t *offset,
+                    mofs_size_t *written_size, mofs_bool update_offset);
+int mofs_truncate_core(int inode_num, mofs_off_t length);
 
 #endif /* __MOFS_FILE__ */

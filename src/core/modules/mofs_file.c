@@ -3,21 +3,22 @@
 #include <mofs_devio.h>
 #include <mofs_dir.h>
 #include <mofs_errno.h>
+#include <mofs_port_errno.h>
 #include <mofs_file.h>
 #include <mofs_inode.h>
-#include <mofs_mem.h>
+#include <mofs_port_mem.h>
 #include <mofs_path.h>
 #include <mofs_perm.h>
-#include <mofs_type.h>
-#include <mofs_user.h>
+#include <mofs_types.h>
+#include <mofs_port_user.h>
 
 /* File handle pool */
 mofs_filehandle_t filehandle_pool[MOFS_FILEHANDLE_POOL_SIZE];
 
 /* internal functions */
-static int zero_partial_block_tail(int inode_num, unsigned int blk_idx, size_t tail_start);
-static int zero_file_byte_range(int inode_num, uint32_t from_off, uint32_t to_off);
-static int truncate_inode(int inode_num, uint32_t new_size);
+static int zero_partial_block_tail(int inode_num, unsigned int blk_idx, mofs_size_t tail_start);
+static int zero_file_byte_range(int inode_num, mofs_uint32_t from_off, mofs_uint32_t to_off);
+static int truncate_inode(int inode_num, mofs_uint32_t new_size);
 
 static int get_free_filehandle_index(void)
 {
@@ -50,7 +51,7 @@ static int get_free_filehandle_index(void)
  * @return Non-zero errno value from `get_errno()` on inode/disk read failures.
  */
 int read_file_data_block(int inode_num, void *buf, unsigned int start_blk_num, unsigned int req_blk_num,
-                         unsigned int *read_blk_num, size_t *fraction)
+                         unsigned int *read_blk_num, mofs_size_t *fraction)
 {
     int          ret = 0;
     mofs_inode_t inode_buf;
@@ -88,7 +89,7 @@ int read_file_data_block(int inode_num, void *buf, unsigned int start_blk_num, u
 
         for (unsigned int i = 0; i < req_blk_num; i++) {
             unsigned int read_one_blk_num = 0U;
-            size_t       read_fraction    = 0U;
+            mofs_size_t       read_fraction    = 0U;
             unsigned int abs_blk_num      = 0U;
 
             /* Logical index -> absolute data block via on-disk list nodes. */
@@ -147,7 +148,7 @@ int read_file_data_block(int inode_num, void *buf, unsigned int start_blk_num, u
  * @return Non-zero errno value propagated from inode/block operations.
  */
 int write_file_data_block(int inode_num, const void *buf, unsigned int start_blk_num, unsigned int req_blk_num,
-                          unsigned int *written_blk_num, size_t *fraction)
+                          unsigned int *written_blk_num, mofs_size_t *fraction)
 {
     int          ret = 0;
     mofs_inode_t inode_buf;
@@ -187,7 +188,7 @@ int write_file_data_block(int inode_num, const void *buf, unsigned int start_blk
 
         for (unsigned int i = 0; i < req_blk_num; i++) {
             unsigned int written_one_blk_num = 0U;
-            size_t       written_fraction    = 0U;
+            mofs_size_t       written_fraction    = 0U;
             unsigned int abs_blk_num         = 0U;
 
             ret = resolve_file_data_block(inode_num, start_blk_num + i, &abs_blk_num);
@@ -241,12 +242,12 @@ int write_file_data_block(int inode_num, const void *buf, unsigned int start_blk
  * @return MOFS_EPERM if caller user context is unavailable.
  * @return Non-zero errno value propagated from path/inode/dir helpers.
  */
-int mofs_create_core(const char *path, mode_t mode, int *inode_num)
+int mofs_create_core(const char *path, mofs_mode_t mode, int *inode_num)
 {
     int              ret                 = 0;
     int              allocated_inode_num = -1;
-    bool             inode_allocated     = false;
-    bool             dirent_linked       = false;
+    mofs_bool             inode_allocated     = MOFS_FALSE;
+    mofs_bool             dirent_linked       = MOFS_FALSE;
     mofs_inode_t     inode_buf;
     mofs_inode_t     parent_inode;
     mofs_user_ctx_t  user;
@@ -273,7 +274,7 @@ int mofs_create_core(const char *path, mode_t mode, int *inode_num)
     if (ret != 0) {
         return ret;
     }
-    if (user.valid == false) {
+    if (user.valid == MOFS_FALSE) {
         return MOFS_EPERM;
     }
 
@@ -290,12 +291,12 @@ int mofs_create_core(const char *path, mode_t mode, int *inode_num)
     if (ret != 0) {
         goto rollback;
     }
-    inode_allocated = true;
+    inode_allocated = MOFS_TRUE;
 
     mofs_memset(&inode_buf, 0, sizeof(inode_buf));
     inode_buf.i_size  = 0U;
     inode_buf.i_links = 1U;
-    inode_buf.i_mode  = (uint16_t)(MOFS_FTYPE_REG | (mode & 0777U));
+    inode_buf.i_mode  = (mofs_uint16_t)(MOFS_FTYPE_REG | (mode & 0777U));
     inode_buf.i_uid   = user.uid;
     inode_buf.i_gid   = user.gid;
     ret               = mofs_inode_stamp_now(&inode_buf, MOFS_INODE_TIME_ALL);
@@ -312,13 +313,13 @@ int mofs_create_core(const char *path, mode_t mode, int *inode_num)
     if (ret != 0) {
         goto rollback;
     }
-    dirent_linked = true;
+    dirent_linked = MOFS_TRUE;
 
     *inode_num = allocated_inode_num;
     return 0;
 
 rollback:
-    if (inode_allocated && (dirent_linked == false)) {
+    if (inode_allocated && (dirent_linked == MOFS_FALSE)) {
         (void)free_inode(allocated_inode_num);
     }
     return ret;
@@ -362,7 +363,7 @@ int mofs_unlink_core(const char *path)
     if (ret != 0) {
         return ret;
     }
-    if (user.valid == false) {
+    if (user.valid == MOFS_FALSE) {
         return MOFS_EPERM;
     }
 
@@ -424,7 +425,7 @@ int mofs_unlink_core(const char *path)
  * @return MOFS_ENFILE if file handle pool is exhausted.
  * @return Other non-zero errno values propagated from lower layers.
  */
-int mofs_open_core(const char *path, int flags, mode_t mode, mofs_filehandle_t **handle)
+int mofs_open_core(const char *path, int flags, mofs_mode_t mode, mofs_filehandle_t **handle)
 {
     int             ret       = 0;
     int             inode_num = -1;
@@ -440,7 +441,7 @@ int mofs_open_core(const char *path, int flags, mode_t mode, mofs_filehandle_t *
     ret = mofs_get_caller_user(&user);
     if (ret != 0) {
         goto out;
-    } else if (user.valid == false) {
+    } else if (user.valid == MOFS_FALSE) {
         ret = MOFS_EPERM;
         goto out;
     }
@@ -492,7 +493,7 @@ int mofs_open_core(const char *path, int flags, mode_t mode, mofs_filehandle_t *
         goto out;
     }
     *handle                = &filehandle_pool[index];
-    (*handle)->used        = true;
+    (*handle)->used        = MOFS_TRUE;
     (*handle)->inode_num   = inode_num;
     (*handle)->file_offset = 0;
     (*handle)->open_flags  = flags;
@@ -516,7 +517,7 @@ int mofs_close_core(mofs_filehandle_t **handle)
 {
     int ret = 0;
 
-    if ((handle == NULL) || (*handle == NULL) || ((*handle)->used == false)) {
+    if ((handle == NULL) || (*handle == NULL) || ((*handle)->used == MOFS_FALSE)) {
         ret = MOFS_EINVAL;
     }
 
@@ -524,7 +525,7 @@ int mofs_close_core(mofs_filehandle_t **handle)
         (*handle)->inode_num   = 0;
         (*handle)->file_offset = 0;
         (*handle)->open_flags  = 0;
-        (*handle)->used        = false;
+        (*handle)->used        = MOFS_FALSE;
         *handle                = NULL;
     }
 
@@ -545,7 +546,7 @@ int mofs_close_core(mofs_filehandle_t **handle)
  * @param[in] size Maximum bytes to read.
  * @param[in,out] offset Byte offset in file; advanced by read bytes on success.
  * @param[out] read_size Actual number of bytes read.
- * @param[in] update_offset If true, updates `handle->file_offset` by read bytes.
+ * @param[in] update_offset If MOFS_TRUE, updates `handle->file_offset` by read bytes.
  * @return 0 on success.
  * @return MOFS_EINVAL if arguments are invalid.
  * @return MOFS_EBADF if handle is not opened with read access.
@@ -553,18 +554,18 @@ int mofs_close_core(mofs_filehandle_t **handle)
  * @return MOFS_EISDIR if target inode is a directory.
  * @return Other non-zero errno values propagated from lower layers.
  */
-int mofs_read_core(mofs_filehandle_t **handle, void *buf, size_t size, off_t *offset, size_t *read_size,
-                   bool update_offset)
+int mofs_read_core(mofs_filehandle_t **handle, void *buf, mofs_size_t size, mofs_off_t *offset, mofs_size_t *read_size,
+                   mofs_bool update_offset)
 {
     int             ret = 0;
     mofs_inode_t    inode;
     mofs_user_ctx_t user;
     void           *buf_tmp      = NULL;
-    size_t          fraction     = 0;
+    mofs_size_t          fraction     = 0;
     unsigned int    read_blk_num = 0;
     unsigned int    req_blk_num  = 0;
 
-    if ((handle == NULL) || (*handle == NULL) || ((*handle)->used == false) || (buf == NULL) || (size == 0) ||
+    if ((handle == NULL) || (*handle == NULL) || ((*handle)->used == MOFS_FALSE) || (buf == NULL) || (size == 0) ||
         (offset == NULL) || (*offset < 0) || (read_size == NULL)) {
         ret = MOFS_EINVAL;
         goto out;
@@ -586,7 +587,7 @@ int mofs_read_core(mofs_filehandle_t **handle, void *buf, size_t size, off_t *of
     ret = mofs_get_caller_user(&user);
     if (ret != 0) {
         goto out;
-    } else if (user.valid == false) {
+    } else if (user.valid == MOFS_FALSE) {
         ret = MOFS_EPERM;
         goto out;
     }
@@ -623,7 +624,7 @@ int mofs_read_core(mofs_filehandle_t **handle, void *buf, size_t size, off_t *of
         }
         mofs_memcpy(buf, (char *)buf_tmp + ((*offset) % ctx.sp_blk.blk_size), (*read_size));
         if (update_offset) {
-            (*handle)->file_offset = (unsigned int)(*offset + (off_t)(*read_size));
+            (*handle)->file_offset = (unsigned int)(*offset + (mofs_off_t)(*read_size));
         }
         if ((*read_size) > 0U) {
             ret = mofs_inode_stamp_now(&inode, MOFS_INODE_TIME_ATIME);
@@ -654,7 +655,7 @@ out:
  * @param[in] size Number of bytes requested to write.
  * @param[in,out] offset Byte offset in file to start writing.
  * @param[out] written_size Actual number of bytes written.
- * @param[in] update_offset If true, updates `handle->file_offset` by written bytes.
+ * @param[in] update_offset If MOFS_TRUE, updates `handle->file_offset` by written bytes.
  * @return 0 on success.
  * @return MOFS_EINVAL if arguments are invalid.
  * @return MOFS_EBADF if handle is not opened with write access.
@@ -664,14 +665,14 @@ out:
  * @return MOFS_ENOSPC if file-size limit is exceeded.
  * @return Other non-zero errno values propagated from lower layers.
  */
-int mofs_write_core(mofs_filehandle_t **handle, const void *buf, size_t size, off_t *offset, size_t *written_size,
-                    bool update_offset)
+int mofs_write_core(mofs_filehandle_t **handle, const void *buf, mofs_size_t size, mofs_off_t *offset, mofs_size_t *written_size,
+                    mofs_bool update_offset)
 {
     int             ret = 0;
     mofs_inode_t    inode;
     mofs_user_ctx_t user;
     void           *buf_tmp          = NULL;
-    size_t          fraction         = 0U;
+    mofs_size_t          fraction         = 0U;
     unsigned int    read_blk_num     = 0U;
     unsigned int    written_blk_num  = 0U;
     unsigned int    start_blk_num    = 0U;
@@ -679,16 +680,16 @@ int mofs_write_core(mofs_filehandle_t **handle, const void *buf, size_t size, of
     unsigned int    current_blk_num  = 0U;
     unsigned int    required_blk_num = 0U;
     unsigned int    alloc_start_blk  = 0U;
-    size_t          write_size_req   = size;
-    size_t          total_write_size = 0U;
-    size_t          write_pos_in_blk = 0U;
-    uint32_t        old_size         = 0U;
-    uint64_t        max_file_size    = mofs_max_file_bytes(); /* MOFS_MAX_FILE_DATA_BLOCKS * blk_size */
-    uint64_t        write_end_offset = 0U;
-    bool            alloc_done       = false;
-    bool            write_started    = false;
+    mofs_size_t          write_size_req   = size;
+    mofs_size_t          total_write_size = 0U;
+    mofs_size_t          write_pos_in_blk = 0U;
+    mofs_uint32_t        old_size         = 0U;
+    mofs_uint64_t        max_file_size    = mofs_max_file_bytes(); /* MOFS_MAX_FILE_DATA_BLOCKS * blk_size */
+    mofs_uint64_t        write_end_offset = 0U;
+    mofs_bool            alloc_done       = MOFS_FALSE;
+    mofs_bool            write_started    = MOFS_FALSE;
 
-    if ((handle == NULL) || (*handle == NULL) || ((*handle)->used == false) || (buf == NULL) || (size == 0U) ||
+    if ((handle == NULL) || (*handle == NULL) || ((*handle)->used == MOFS_FALSE) || (buf == NULL) || (size == 0U) ||
         (offset == NULL) || (*offset < 0) || (written_size == NULL)) {
         ret = MOFS_EINVAL;
         goto out;
@@ -712,7 +713,7 @@ int mofs_write_core(mofs_filehandle_t **handle, const void *buf, size_t size, of
     ret = mofs_get_caller_user(&user);
     if (ret != 0) {
         goto out;
-    } else if (user.valid == false) {
+    } else if (user.valid == MOFS_FALSE) {
         ret = MOFS_EPERM;
         goto out;
     }
@@ -727,20 +728,20 @@ int mofs_write_core(mofs_filehandle_t **handle, const void *buf, size_t size, of
         goto out;
     }
 
-    if ((uint64_t)(*offset) >= max_file_size) {
+    if ((mofs_uint64_t)(*offset) >= max_file_size) {
         ret = MOFS_EFBIG;
         goto out;
     }
-    if (write_size_req > (size_t)(max_file_size - (uint64_t)(*offset))) {
-        write_size_req = (size_t)(max_file_size - (uint64_t)(*offset));
+    if (write_size_req > (mofs_size_t)(max_file_size - (mofs_uint64_t)(*offset))) {
+        write_size_req = (mofs_size_t)(max_file_size - (mofs_uint64_t)(*offset));
     }
     if (write_size_req == 0U) {
         ret = 0;
         goto out;
     }
 
-    start_blk_num    = (unsigned int)((uint64_t)(*offset) / (uint64_t)ctx.sp_blk.blk_size);
-    write_pos_in_blk = (size_t)((uint64_t)(*offset) % (uint64_t)ctx.sp_blk.blk_size);
+    start_blk_num    = (unsigned int)((mofs_uint64_t)(*offset) / (mofs_uint64_t)ctx.sp_blk.blk_size);
+    write_pos_in_blk = (mofs_size_t)((mofs_uint64_t)(*offset) % (mofs_uint64_t)ctx.sp_blk.blk_size);
     req_blk_num = (unsigned int)((write_pos_in_blk + write_size_req + ctx.sp_blk.blk_size - 1U) / ctx.sp_blk.blk_size);
 
     current_blk_num = (old_size + ctx.sp_blk.blk_size - 1U) / ctx.sp_blk.blk_size;
@@ -751,19 +752,19 @@ int mofs_write_core(mofs_filehandle_t **handle, const void *buf, size_t size, of
         if (ret != 0) {
             goto out;
         }
-        alloc_done = true;
+        alloc_done = MOFS_TRUE;
         ret        = mofs_read_inode((*handle)->inode_num, &inode);
         if (ret != 0) {
             goto out;
         }
     }
 
-    buf_tmp = mofs_malloc((size_t)req_blk_num * ctx.sp_blk.blk_size);
+    buf_tmp = mofs_malloc((mofs_size_t)req_blk_num * ctx.sp_blk.blk_size);
     if (buf_tmp == NULL) {
         ret = get_errno();
         goto out;
     }
-    mofs_memset(buf_tmp, 0, (size_t)req_blk_num * ctx.sp_blk.blk_size);
+    mofs_memset(buf_tmp, 0, (mofs_size_t)req_blk_num * ctx.sp_blk.blk_size);
 
     /* Preload overlapping existing blocks (read-modify-write) via list mapping. */
     current_blk_num = (old_size + ctx.sp_blk.blk_size - 1U) / ctx.sp_blk.blk_size;
@@ -783,7 +784,7 @@ int mofs_write_core(mofs_filehandle_t **handle, const void *buf, size_t size, of
             goto out;
         }
 
-        ret = read_continuous_blocks(ctx.dev_fd, (char *)buf_tmp + (size_t)i * ctx.sp_blk.blk_size, 1U, abs_blk_num,
+        ret = read_continuous_blocks(ctx.dev_fd, (char *)buf_tmp + (mofs_size_t)i * ctx.sp_blk.blk_size, 1U, abs_blk_num,
                                      &read_blk_num, &fraction);
         if (ret != 0) {
             goto out;
@@ -794,26 +795,26 @@ int mofs_write_core(mofs_filehandle_t **handle, const void *buf, size_t size, of
     }
 
     /* zero-fill the gap between old EOF and write offset if needed */
-    if ((uint64_t)old_size < (uint64_t)(*offset)) {
-        uint64_t start_off     = (uint64_t)start_blk_num * (uint64_t)ctx.sp_blk.blk_size;
-        uint64_t zero_from_off = ((uint64_t)old_size > start_off) ? (uint64_t)old_size : start_off;
-        uint64_t zero_to_off   = (uint64_t)(*offset);
+    if ((mofs_uint64_t)old_size < (mofs_uint64_t)(*offset)) {
+        mofs_uint64_t start_off     = (mofs_uint64_t)start_blk_num * (mofs_uint64_t)ctx.sp_blk.blk_size;
+        mofs_uint64_t zero_from_off = ((mofs_uint64_t)old_size > start_off) ? (mofs_uint64_t)old_size : start_off;
+        mofs_uint64_t zero_to_off   = (mofs_uint64_t)(*offset);
         if (zero_to_off > zero_from_off) {
-            size_t zero_from_inbuf = (size_t)(zero_from_off - start_off);
-            size_t zero_size       = (size_t)(zero_to_off - zero_from_off);
+            mofs_size_t zero_from_inbuf = (mofs_size_t)(zero_from_off - start_off);
+            mofs_size_t zero_size       = (mofs_size_t)(zero_to_off - zero_from_off);
             mofs_memset((char *)buf_tmp + zero_from_inbuf, 0, zero_size);
         }
     }
 
     mofs_memcpy((char *)buf_tmp + write_pos_in_blk, buf, write_size_req);
 
-    write_started = true;
+    write_started = MOFS_TRUE;
     ret = write_file_data_block((*handle)->inode_num, buf_tmp, start_blk_num, req_blk_num, &written_blk_num, &fraction);
     if (ret != 0) {
         goto out;
     }
 
-    total_write_size = (size_t)written_blk_num * ctx.sp_blk.blk_size + fraction;
+    total_write_size = (mofs_size_t)written_blk_num * ctx.sp_blk.blk_size + fraction;
     if (total_write_size < write_pos_in_blk) {
         *written_size = 0U;
     } else {
@@ -823,9 +824,9 @@ int mofs_write_core(mofs_filehandle_t **handle, const void *buf, size_t size, of
         }
     }
 
-    write_end_offset = (uint64_t)(*offset) + (uint64_t)(*written_size);
-    if ((ret == 0) && (write_end_offset > (uint64_t)inode.i_size)) {
-        inode.i_size = (uint32_t)write_end_offset;
+    write_end_offset = (mofs_uint64_t)(*offset) + (mofs_uint64_t)(*written_size);
+    if ((ret == 0) && (write_end_offset > (mofs_uint64_t)inode.i_size)) {
+        inode.i_size = (mofs_uint32_t)write_end_offset;
     }
     if ((ret == 0) && ((*written_size) > 0U)) {
         ret = mofs_inode_stamp_now(&inode, MOFS_INODE_TIME_MTIME | MOFS_INODE_TIME_CTIME);
@@ -835,11 +836,11 @@ int mofs_write_core(mofs_filehandle_t **handle, const void *buf, size_t size, of
     }
 
     if (update_offset) {
-        (*handle)->file_offset = (unsigned int)((uint64_t)(*offset) + (uint64_t)(*written_size));
+        (*handle)->file_offset = (unsigned int)((mofs_uint64_t)(*offset) + (mofs_uint64_t)(*written_size));
     }
 
 out:
-    if ((ret != 0) && (alloc_done == true) && (write_started == false) && (handle != NULL) && (*handle != NULL)) {
+    if ((ret != 0) && (alloc_done == MOFS_TRUE) && (write_started == MOFS_FALSE) && (handle != NULL) && (*handle != NULL)) {
         (void)free_data_block((*handle)->inode_num, alloc_start_blk, required_blk_num);
     }
     if (buf_tmp != NULL) {
@@ -864,15 +865,15 @@ out:
  * @return MOFS_EIO if block read/write does not complete as expected.
  * @return Other non-zero errno values propagated from lower layers.
  */
-static int zero_partial_block_tail(int inode_num, unsigned int blk_idx, size_t tail_start)
+static int zero_partial_block_tail(int inode_num, unsigned int blk_idx, mofs_size_t tail_start)
 {
     int          ret              = 0;
     void        *buf              = NULL;
     unsigned int abs_blk_num      = 0U;
     unsigned int read_blk_num     = 0U;
     unsigned int written_blk_num  = 0U;
-    size_t       fraction         = 0U;
-    size_t       written_fraction = 0U;
+    mofs_size_t       fraction         = 0U;
+    mofs_size_t       written_fraction = 0U;
 
     if (tail_start >= ctx.sp_blk.blk_size) {
         return MOFS_EINVAL;
@@ -927,18 +928,18 @@ out:
  * @return MOFS_EIO if block read/write does not complete as expected.
  * @return Other non-zero errno values propagated from lower layers.
  */
-static int zero_file_byte_range(int inode_num, uint32_t from_off, uint32_t to_off)
+static int zero_file_byte_range(int inode_num, mofs_uint32_t from_off, mofs_uint32_t to_off)
 {
     int          ret = 0;
     mofs_inode_t inode;
     void        *buf_tmp         = NULL;
-    size_t       fraction        = 0U;
+    mofs_size_t       fraction        = 0U;
     unsigned int read_blk_num    = 0U;
     unsigned int written_blk_num = 0U;
     unsigned int start_blk_num   = 0U;
     unsigned int req_blk_num     = 0U;
     unsigned int current_blk_num = 0U;
-    uint32_t     old_size        = 0U;
+    mofs_uint32_t     old_size        = 0U;
 
     if (from_off >= to_off) {
         return 0;
@@ -954,11 +955,11 @@ static int zero_file_byte_range(int inode_num, uint32_t from_off, uint32_t to_of
     start_blk_num = from_off / ctx.sp_blk.blk_size;
     req_blk_num   = ((to_off - 1U) / ctx.sp_blk.blk_size) - start_blk_num + 1U;
 
-    buf_tmp = mofs_malloc((size_t)req_blk_num * ctx.sp_blk.blk_size);
+    buf_tmp = mofs_malloc((mofs_size_t)req_blk_num * ctx.sp_blk.blk_size);
     if (buf_tmp == NULL) {
         return get_errno();
     }
-    mofs_memset(buf_tmp, 0, (size_t)req_blk_num * ctx.sp_blk.blk_size);
+    mofs_memset(buf_tmp, 0, (mofs_size_t)req_blk_num * ctx.sp_blk.blk_size);
 
     /* Preload overlapping existing blocks (read-modify-write) via list mapping. */
     current_blk_num = (old_size + ctx.sp_blk.blk_size - 1U) / ctx.sp_blk.blk_size;
@@ -973,7 +974,7 @@ static int zero_file_byte_range(int inode_num, uint32_t from_off, uint32_t to_of
         if (ret != 0) {
             goto out;
         }
-        ret = read_continuous_blocks(ctx.dev_fd, (char *)buf_tmp + (size_t)i * ctx.sp_blk.blk_size, 1U, abs_blk_num,
+        ret = read_continuous_blocks(ctx.dev_fd, (char *)buf_tmp + (mofs_size_t)i * ctx.sp_blk.blk_size, 1U, abs_blk_num,
                                      &read_blk_num, &fraction);
         if ((ret != 0) || (read_blk_num != 1U) || (fraction != 0U)) {
             ret = MOFS_EIO;
@@ -983,12 +984,12 @@ static int zero_file_byte_range(int inode_num, uint32_t from_off, uint32_t to_of
 
     /* Zero only the target sub-range within the assembled block buffer. */
     {
-        uint64_t start_off     = (uint64_t)start_blk_num * (uint64_t)ctx.sp_blk.blk_size;
-        uint64_t zero_from_off = ((uint64_t)from_off > start_off) ? (uint64_t)from_off : start_off;
-        uint64_t zero_to_off   = (uint64_t)to_off;
+        mofs_uint64_t start_off     = (mofs_uint64_t)start_blk_num * (mofs_uint64_t)ctx.sp_blk.blk_size;
+        mofs_uint64_t zero_from_off = ((mofs_uint64_t)from_off > start_off) ? (mofs_uint64_t)from_off : start_off;
+        mofs_uint64_t zero_to_off   = (mofs_uint64_t)to_off;
         if (zero_to_off > zero_from_off) {
-            size_t zero_from_inbuf = (size_t)(zero_from_off - start_off);
-            size_t zero_size       = (size_t)(zero_to_off - zero_from_off);
+            mofs_size_t zero_from_inbuf = (mofs_size_t)(zero_from_off - start_off);
+            mofs_size_t zero_size       = (mofs_size_t)(zero_to_off - zero_from_off);
             mofs_memset((char *)buf_tmp + zero_from_inbuf, 0, zero_size);
         }
     }
@@ -1018,18 +1019,18 @@ out:
  * @return MOFS_EPERM or MOFS_EACCES if caller has no write permission.
  * @return Other non-zero errno values propagated from lower layers.
  */
-static int truncate_inode(int inode_num, uint32_t new_size)
+static int truncate_inode(int inode_num, mofs_uint32_t new_size)
 {
     int             ret = 0;
     mofs_inode_t    inode;
     mofs_user_ctx_t user;
-    uint32_t        old_size         = 0U;
+    mofs_uint32_t        old_size         = 0U;
     unsigned int    old_nr_blocks    = 0U;
     unsigned int    keep_blks        = 0U;
     unsigned int    needed_blks      = 0U;
     unsigned int    alloc_start_blk  = 0U;
     unsigned int    required_blk_num = 0U;
-    bool            alloc_done       = false;
+    mofs_bool            alloc_done       = MOFS_FALSE;
 
     ret = mofs_read_inode(inode_num, &inode);
     if (ret != 0) {
@@ -1043,7 +1044,7 @@ static int truncate_inode(int inode_num, uint32_t new_size)
     ret = mofs_get_caller_user(&user);
     if (ret != 0) {
         return ret;
-    } else if (user.valid == false) {
+    } else if (user.valid == MOFS_FALSE) {
         return MOFS_EPERM;
     }
     ret = mofs_check_open_permission(MOFS_OFLAG_WRONLY, &user, &inode);
@@ -1088,7 +1089,7 @@ static int truncate_inode(int inode_num, uint32_t new_size)
             if (ret != 0) {
                 return ret;
             }
-            alloc_done = true;
+            alloc_done = MOFS_TRUE;
             ret        = mofs_read_inode(inode_num, &inode);
             if (ret != 0) {
                 goto rollback;
@@ -1138,7 +1139,7 @@ rollback:
  * @return MOFS_EPERM or MOFS_EACCES if caller has no write permission.
  * @return Other non-zero errno values propagated from lower layers.
  */
-int mofs_truncate_core(int inode_num, off_t length)
+int mofs_truncate_core(int inode_num, mofs_off_t length)
 {
     /* Reject invalid inode and negative length before touching on-disk metadata. */
     if (inode_num < 0) {
@@ -1147,11 +1148,11 @@ int mofs_truncate_core(int inode_num, off_t length)
     if (length < 0) {
         return MOFS_EINVAL;
     }
-    if ((uint64_t)length > mofs_max_file_bytes()) {
+    if ((mofs_uint64_t)length > mofs_max_file_bytes()) {
         return MOFS_EFBIG;
     }
 
-    return truncate_inode(inode_num, (uint32_t)length);
+    return truncate_inode(inode_num, (mofs_uint32_t)length);
 }
 
 /**
@@ -1186,7 +1187,7 @@ int mofs_stat_core(const char *path, mofs_stat_t *stbuf)
 
         ret = mofs_get_caller_user(&user);
         if (ret == 0) {
-            if (user.valid == false) {
+            if (user.valid == MOFS_FALSE) {
                 ret = MOFS_EPERM;
             }
         }
@@ -1213,9 +1214,9 @@ int mofs_stat_core(const char *path, mofs_stat_t *stbuf)
         stbuf->st_mode      = inode.i_mode;
         stbuf->st_uid       = inode.i_uid;
         stbuf->st_gid       = inode.i_gid;
-        stbuf->st_atime_sec = (int64_t)inode.i_atime;
-        stbuf->st_mtime_sec = (int64_t)inode.i_mtime;
-        stbuf->st_ctime_sec = (int64_t)inode.i_ctime;
+        stbuf->st_atime_sec = (mofs_int64_t)inode.i_atime;
+        stbuf->st_mtime_sec = (mofs_int64_t)inode.i_mtime;
+        stbuf->st_ctime_sec = (mofs_int64_t)inode.i_ctime;
     }
 
     return ret;

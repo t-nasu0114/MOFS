@@ -8,7 +8,7 @@
 #include <mofs_file.h>
 #include <mofs_inode.h>
 #include <mofs_posix.h>
-#include <mofs_user.h>
+#include <mofs_port_user.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -36,12 +36,12 @@ static int setup_block_list_fixture(void **state)
         (void)mofs_test_remove_file(image_path);
         return -1;
     }
-    ret = mofs_set_caller_user((uid_t)0, (gid_t)0, getpid());
+    ret = mofs_set_caller_user((mofs_uid_t)0, (mofs_gid_t)0, getpid());
     if (ret != 0) {
         (void)mofs_test_remove_file(image_path);
         return -1;
     }
-    ret = mofs_init_core(image_path, false, 0U, 0U);
+    ret = mofs_init_core(image_path, MOFS_FALSE, 0U, 0U);
     if (ret != 0) {
         (void)mofs_clear_caller_user();
         (void)mofs_test_remove_file(image_path);
@@ -66,12 +66,12 @@ static int setup_block_list_512_fixture(void **state)
         (void)mofs_test_remove_file(image_path);
         return -1;
     }
-    ret = mofs_set_caller_user((uid_t)0, (gid_t)0, getpid());
+    ret = mofs_set_caller_user((mofs_uid_t)0, (mofs_gid_t)0, getpid());
     if (ret != 0) {
         (void)mofs_test_remove_file(image_path);
         return -1;
     }
-    ret = mofs_init_core(image_path, false, 0U, 0U);
+    ret = mofs_init_core(image_path, MOFS_FALSE, 0U, 0U);
     if (ret != 0) {
         (void)mofs_clear_caller_user();
         (void)mofs_test_remove_file(image_path);
@@ -96,15 +96,15 @@ static void test_file_more_than_twelve_blocks(void **state)
 {
     mofs_filehandle_t *handle = NULL;
     unsigned char     *buf    = NULL;
-    size_t             file_size;
+    mofs_size_t             file_size;
     ssize_t            written;
     ssize_t            read_back;
 
     (void)state;
-    file_size = 13U * (size_t)MOFS_BLK_SIZE;
+    file_size = 13U * (mofs_size_t)MOFS_BLK_SIZE;
     buf       = (unsigned char *)malloc(file_size);
     assert_non_null(buf);
-    for (size_t i = 0U; i < file_size; i++) {
+    for (mofs_size_t i = 0U; i < file_size; i++) {
         buf[i] = (unsigned char)(i & 0xFFU);
     }
 
@@ -125,7 +125,7 @@ static void test_file_more_than_twelve_blocks(void **state)
     free(buf);
 }
 
-static void assert_chained_list_nodes(const char *path, unsigned int expected_nr_blocks, uint32_t blk_size)
+static void assert_chained_list_nodes(const char *path, unsigned int expected_nr_blocks, mofs_uint32_t blk_size)
 {
     mofs_inode_t          inode;
     int                   inode_num = 0;
@@ -135,7 +135,7 @@ static void assert_chained_list_nodes(const char *path, unsigned int expected_nr
     unsigned int          node_abs  = 0U;
     unsigned int          nodes     = 0U;
     unsigned int          read_blk_num;
-    size_t                fraction;
+    mofs_size_t                fraction;
     int                   ret;
 
     assert_true(ptrs_cap > 0U);
@@ -148,7 +148,7 @@ static void assert_chained_list_nodes(const char *path, unsigned int expected_nr
     assert_int_equal(inode.i_nr_blocks, expected_nr_blocks);
     assert_true(inode.i_data_head != 0U);
 
-    blk_buf = (unsigned char *)malloc((size_t)blk_size);
+    blk_buf = (unsigned char *)malloc((mofs_size_t)blk_size);
     assert_non_null(blk_buf);
 
     node_abs = inode.i_data_head;
@@ -177,16 +177,16 @@ static void test_file_chained_list_nodes_at_512b(void **state)
     mofs_stat_t        st;
     unsigned char     *buf    = NULL;
     unsigned char      sample;
-    size_t             file_size;
+    mofs_size_t             file_size;
     ssize_t            written;
     ssize_t            read_back;
     const unsigned int nr_blocks = TEST_CHAINED_LIST_DATA_BLOCKS;
 
     (void)state;
-    file_size = (size_t)nr_blocks * (size_t)TEST_LIST_BLK_SIZE;
+    file_size = (mofs_size_t)nr_blocks * (mofs_size_t)TEST_LIST_BLK_SIZE;
     buf       = (unsigned char *)malloc(file_size);
     assert_non_null(buf);
-    for (size_t i = 0U; i < file_size; i++) {
+    for (mofs_size_t i = 0U; i < file_size; i++) {
         buf[i] = (unsigned char)(i & 0xFFU);
     }
 
@@ -196,7 +196,7 @@ static void test_file_chained_list_nodes_at_512b(void **state)
     written = mofs_write(handle, buf, file_size);
     assert_int_equal(written, (ssize_t)file_size);
 
-    read_back = mofs_pread(handle, &sample, 1U, (off_t)((126U * TEST_LIST_BLK_SIZE) + 10U));
+    read_back = mofs_pread(handle, &sample, 1U, (mofs_off_t)((126U * TEST_LIST_BLK_SIZE) + 10U));
     assert_int_equal(read_back, 1);
     assert_int_equal(sample, (int)((126U * TEST_LIST_BLK_SIZE + 10U) & 0xFFU));
 
@@ -223,7 +223,7 @@ static void test_file_chained_list_nodes_at_512b(void **state)
 static void test_write_at_max_file_size_returns_efbig(void **state)
 {
     mofs_filehandle_t *handle = NULL;
-    uint64_t           max_bytes;
+    mofs_uint64_t           max_bytes;
     unsigned char      byte    = 0x5AU;
     ssize_t            written;
 
@@ -233,7 +233,7 @@ static void test_write_at_max_file_size_returns_efbig(void **state)
     handle = mofs_open("/atlimit.bin", MOFS_OFLAG_CREAT | MOFS_OFLAG_RDWR, 0644U);
     assert_non_null(handle);
 
-    written = mofs_pwrite(handle, &byte, 1U, (off_t)max_bytes);
+    written = mofs_pwrite(handle, &byte, 1U, (mofs_off_t)max_bytes);
     assert_int_equal(written, -1);
     assert_int_equal(mofs_errno, MOFS_EFBIG);
 

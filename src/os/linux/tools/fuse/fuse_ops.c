@@ -7,10 +7,12 @@
 #include <fcntl.h>
 #include <fuse.h>
 #include <mofs_errno.h>
+#include <mofs_port_errno.h>
 #include <mofs_lifecycle.h>
 #include <mofs_posix.h>
-#include <mofs_user.h>
+#include <mofs_port_user.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <sys/stat.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,7 +24,7 @@ static void mofs_fuse_bind_request_caller(void)
     struct fuse_context *ctx = fuse_get_context();
 
     if (ctx != NULL) {
-        (void)mofs_set_caller_for_peer_process(ctx->uid, ctx->gid, ctx->pid);
+        (void)mofs_set_caller_for_peer_process((mofs_uid_t)ctx->uid, (mofs_gid_t)ctx->gid, (mofs_pid_t)ctx->pid);
     }
 }
 
@@ -160,13 +162,13 @@ void *mofs_init_fuse(struct fuse_conn_info *conn, struct fuse_config *cfg)
 
     fuse_ctx = (mofs_fuse_ctx_t *)context->private_data;
 
-    ret = mofs_init_core(fuse_ctx->devfile_path, true, (uint32_t)geteuid(), (uint32_t)getegid());
+    ret = mofs_init_core(fuse_ctx->devfile_path, MOFS_TRUE, (mofs_uint32_t)geteuid(), (mofs_uint32_t)getegid());
     if (ret != 0) {
         fprintf(stderr, "Failed to initialize MOFS core: %d\n", ret);
         exit(EXIT_FAILURE);
     }
 
-    (void)mofs_set_caller_for_peer_process(geteuid(), getegid(), getpid());
+    (void)mofs_set_caller_for_peer_process((mofs_uid_t)geteuid(), (mofs_gid_t)getegid(), (mofs_pid_t)getpid());
 
     return (void *)(fuse_ctx);
 }

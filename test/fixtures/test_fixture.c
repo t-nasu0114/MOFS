@@ -7,7 +7,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-int mofs_test_create_temp_image(char *out_path, size_t out_path_len, size_t size_bytes)
+int mofs_test_create_temp_image(char *out_path, mofs_size_t out_path_len, mofs_size_t size_bytes)
 {
     int  fd     = -1;
     int  ret    = -1;
@@ -23,7 +23,7 @@ int mofs_test_create_temp_image(char *out_path, size_t out_path_len, size_t size
     }
 
     if (size_bytes > 0U) {
-        if (ftruncate(fd, (off_t)size_bytes) != 0) {
+        if (ftruncate(fd, (mofs_off_t)size_bytes) != 0) {
             close(fd);
             unlink(tmpl);
             return -1;

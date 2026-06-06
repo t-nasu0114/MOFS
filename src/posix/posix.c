@@ -134,7 +134,7 @@ mofs_dirent_t *mofs_readdir(mofs_dirhandle_t *handle)
  * @return Opened file handle pointer on success.
  * @return NULL on failure (with `mofs_errno` updated).
  */
-mofs_filehandle_t *mofs_open(const char *path, int flags, mode_t mode)
+mofs_filehandle_t *mofs_open(const char *path, int flags, mofs_mode_t mode)
 {
     int                err    = 0;
     mofs_filehandle_t *handle = NULL;
@@ -186,13 +186,13 @@ int mofs_close(mofs_filehandle_t *handle)
  * @return Number of bytes read on success.
  * @return -1 on failure (with `mofs_errno` updated).
  */
-int mofs_read(mofs_filehandle_t *handle, void *buf, size_t size)
+int mofs_read(mofs_filehandle_t *handle, void *buf, mofs_size_t size)
 {
     if (handle == NULL) {
         posix_set_errno(MOFS_EINVAL);
         return -1;
     }
-    return mofs_pread(handle, buf, size, (off_t)(handle->file_offset));
+    return mofs_pread(handle, buf, size, (mofs_off_t)(handle->file_offset));
 }
 
 /**
@@ -210,13 +210,13 @@ int mofs_read(mofs_filehandle_t *handle, void *buf, size_t size)
  * @return Number of bytes written on success.
  * @return -1 on failure (with `mofs_errno` updated).
  */
-int mofs_write(mofs_filehandle_t *handle, const void *buf, size_t size)
+int mofs_write(mofs_filehandle_t *handle, const void *buf, mofs_size_t size)
 {
     if (handle == NULL) {
         posix_set_errno(MOFS_EINVAL);
         return -1;
     }
-    return mofs_pwrite(handle, buf, size, (off_t)(handle->file_offset));
+    return mofs_pwrite(handle, buf, size, (mofs_off_t)(handle->file_offset));
 }
 
 /**
@@ -234,20 +234,20 @@ int mofs_write(mofs_filehandle_t *handle, const void *buf, size_t size)
  * @return Number of bytes read on success.
  * @return -1 on failure (with `mofs_errno` updated).
  */
-int mofs_pread(mofs_filehandle_t *handle, void *buf, size_t size, off_t offset)
+int mofs_pread(mofs_filehandle_t *handle, void *buf, mofs_size_t size, mofs_off_t offset)
 {
     int    err         = 0;
     int    ret         = 0;
-    off_t  read_offset = offset;
-    off_t  max_offset  = (off_t)UINT32_MAX;
-    size_t read_size   = 0;
+    mofs_off_t  read_offset = offset;
+    mofs_off_t  max_offset  = (mofs_off_t)MOFS_UINT32_MAX;
+    mofs_size_t read_size   = 0;
 
     if ((handle == NULL) || (offset < 0) || (offset > max_offset)) {
         posix_set_errno(MOFS_EINVAL);
         return -1;
     }
 
-    err = mofs_read_core(&handle, buf, size, &read_offset, &read_size, true);
+    err = mofs_read_core(&handle, buf, size, &read_offset, &read_size, MOFS_TRUE);
     if (err != 0) {
         posix_set_errno(err);
         ret = -1;
@@ -273,20 +273,20 @@ int mofs_pread(mofs_filehandle_t *handle, void *buf, size_t size, off_t offset)
  * @return Number of bytes written on success.
  * @return -1 on failure (with `mofs_errno` updated).
  */
-int mofs_pwrite(mofs_filehandle_t *handle, const void *buf, size_t size, off_t offset)
+int mofs_pwrite(mofs_filehandle_t *handle, const void *buf, mofs_size_t size, mofs_off_t offset)
 {
     int    err          = 0;
     int    ret          = 0;
-    off_t  write_offset = offset;
-    off_t  max_offset   = (off_t)UINT32_MAX;
-    size_t written_size = 0;
+    mofs_off_t  write_offset = offset;
+    mofs_off_t  max_offset   = (mofs_off_t)MOFS_UINT32_MAX;
+    mofs_size_t written_size = 0;
 
     if ((handle == NULL) || (offset < 0) || (offset > max_offset)) {
         posix_set_errno(MOFS_EINVAL);
         return -1;
     }
 
-    err = mofs_write_core(&handle, buf, size, &write_offset, &written_size, true);
+    err = mofs_write_core(&handle, buf, size, &write_offset, &written_size, MOFS_TRUE);
     if (err != 0) {
         posix_set_errno(err);
         ret = -1;
@@ -310,7 +310,7 @@ int mofs_pwrite(mofs_filehandle_t *handle, const void *buf, size_t size, off_t o
  * @return 0 on success.
  * @return -1 on failure (with `mofs_errno` updated).
  */
-int mofs_truncate(const char *path, off_t length)
+int mofs_truncate(const char *path, mofs_off_t length)
 {
     int inode_num = -1;
     int err       = 0;
@@ -343,11 +343,11 @@ int mofs_truncate(const char *path, off_t length)
  * @return 0 on success.
  * @return -1 on failure (with `mofs_errno` updated).
  */
-int mofs_ftruncate(mofs_filehandle_t *handle, off_t length)
+int mofs_ftruncate(mofs_filehandle_t *handle, mofs_off_t length)
 {
     int err = 0;
 
-    if ((handle == NULL) || (handle->used == false)) {
+    if ((handle == NULL) || (handle->used == MOFS_FALSE)) {
         posix_set_errno(MOFS_EBADF);
         return -1;
     }
@@ -402,7 +402,7 @@ int mofs_unlink(const char *path)
  * @return 0 on success.
  * @return -1 on failure (with `mofs_errno` updated).
  */
-int mofs_mkdir(const char *path, mode_t mode)
+int mofs_mkdir(const char *path, mofs_mode_t mode)
 {
     int err = 0;
 

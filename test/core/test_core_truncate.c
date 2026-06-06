@@ -8,7 +8,7 @@
 #include <mofs_file.h>
 #include <mofs_inode.h>
 #include <mofs_posix.h>
-#include <mofs_user.h>
+#include <mofs_port_user.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -31,12 +31,12 @@ static int setup_truncate_fixture(void **state)
         (void)mofs_test_remove_file(image_path);
         return -1;
     }
-    ret = mofs_set_caller_user((uid_t)0, (gid_t)0, getpid());
+    ret = mofs_set_caller_user((mofs_uid_t)0, (mofs_gid_t)0, getpid());
     if (ret != 0) {
         (void)mofs_test_remove_file(image_path);
         return -1;
     }
-    ret = mofs_init_core(image_path, false, 0U, 0U);
+    ret = mofs_init_core(image_path, MOFS_FALSE, 0U, 0U);
     if (ret != 0) {
         (void)mofs_clear_caller_user();
         (void)mofs_test_remove_file(image_path);
@@ -56,7 +56,7 @@ static int teardown_truncate_fixture(void **state)
     return mofs_test_remove_file(image_path);
 }
 
-static mofs_filehandle_t *create_file_with_data(const char *path, const unsigned char *data, size_t size)
+static mofs_filehandle_t *create_file_with_data(const char *path, const unsigned char *data, mofs_size_t size)
 {
     mofs_filehandle_t *handle = NULL;
     ssize_t            written;
@@ -107,7 +107,7 @@ static void test_shrink_partial_block(void **state)
     mofs_stat_t        st;
     unsigned char     *buf    = NULL;
     unsigned char      read_buf[256];
-    size_t             file_size = (size_t)MOFS_BLK_SIZE;
+    mofs_size_t             file_size = (mofs_size_t)MOFS_BLK_SIZE;
     ssize_t            read_back;
 
     (void)state;
@@ -143,13 +143,13 @@ static void test_shrink_multi_block(void **state)
     mofs_stat_t        st;
     unsigned char     *buf       = NULL;
     unsigned char      read_buf[32];
-    size_t             file_size = 3U * (size_t)MOFS_BLK_SIZE;
+    mofs_size_t             file_size = 3U * (mofs_size_t)MOFS_BLK_SIZE;
     ssize_t            read_back;
 
     (void)state;
     buf = (unsigned char *)malloc(file_size);
     assert_non_null(buf);
-    for (size_t i = 0U; i < file_size; i++) {
+    for (mofs_size_t i = 0U; i < file_size; i++) {
         buf[i] = (unsigned char)(i & 0xFFU);
     }
 
@@ -157,14 +157,14 @@ static void test_shrink_multi_block(void **state)
     assert_non_null(handle);
     assert_int_equal(mofs_close(handle), 0);
 
-    assert_int_equal(mofs_truncate("/multi.bin", (off_t)MOFS_BLK_SIZE + 10), 0);
+    assert_int_equal(mofs_truncate("/multi.bin", (mofs_off_t)MOFS_BLK_SIZE + 10), 0);
 
     assert_int_equal(mofs_stat("/multi.bin", &st), 0);
-    assert_int_equal(st.st_size, (off_t)MOFS_BLK_SIZE + 10);
+    assert_int_equal(st.st_size, (mofs_off_t)MOFS_BLK_SIZE + 10);
 
     handle = mofs_open("/multi.bin", MOFS_OFLAG_RDONLY, 0U);
     assert_non_null(handle);
-    read_back = mofs_pread(handle, read_buf, sizeof(read_buf), (off_t)MOFS_BLK_SIZE);
+    read_back = mofs_pread(handle, read_buf, sizeof(read_buf), (mofs_off_t)MOFS_BLK_SIZE);
     assert_int_equal(read_back, 10);
     assert_int_equal(read_buf[0], (int)(MOFS_BLK_SIZE & 0xFFU));
     assert_int_equal(read_buf[9], (int)((MOFS_BLK_SIZE + 9U) & 0xFFU));
@@ -234,7 +234,7 @@ static void test_no_op(void **state)
 static void test_efbig(void **state)
 {
     mofs_filehandle_t *handle = NULL;
-    uint64_t           max_bytes;
+    mofs_uint64_t           max_bytes;
     int                ret;
 
     (void)state;
@@ -242,7 +242,7 @@ static void test_efbig(void **state)
     assert_non_null(handle);
 
     max_bytes = mofs_max_file_bytes();
-    ret       = mofs_truncate_core(handle->inode_num, (off_t)(max_bytes + 1U));
+    ret       = mofs_truncate_core(handle->inode_num, (mofs_off_t)(max_bytes + 1U));
     assert_int_equal(ret, MOFS_EFBIG);
 
     assert_int_equal(mofs_close(handle), 0);

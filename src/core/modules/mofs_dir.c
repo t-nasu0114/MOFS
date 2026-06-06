@@ -2,14 +2,15 @@
 #include "mofs_core.h"
 #include <mofs_dir.h>
 #include <mofs_errno.h>
+#include <mofs_port_errno.h>
 #include <mofs_file.h>
 #include <mofs_inode.h>
-#include <mofs_mem.h>
+#include <mofs_port_mem.h>
 #include <mofs_path.h>
 #include <mofs_perm.h>
-#include <mofs_str.h>
-#include <mofs_type.h>
-#include <mofs_user.h>
+#include <mofs_port_str.h>
+#include <mofs_types.h>
+#include <mofs_port_user.h>
 #include <stdint.h>
 
 /* Directory handle pool */
@@ -30,7 +31,7 @@ static int write_dot_entries(int child_inode_num, int parent_inode_num)
     int            ret             = 0;
     mofs_dirent_t *blk_buf         = NULL;
     unsigned int   written_blk_num = 0U;
-    size_t         fraction        = 0U;
+    mofs_size_t         fraction        = 0U;
 
     blk_buf = (mofs_dirent_t *)mofs_malloc(ctx.sp_blk.blk_size);
     if (blk_buf == NULL) {
@@ -39,9 +40,9 @@ static int write_dot_entries(int child_inode_num, int parent_inode_num)
     mofs_memset(blk_buf, 0, ctx.sp_blk.blk_size);
 
     mofs_strcpy(blk_buf[0].name, ".");
-    blk_buf[0].inode_num = (uint32_t)child_inode_num;
+    blk_buf[0].inode_num = (mofs_uint32_t)child_inode_num;
     mofs_strcpy(blk_buf[1].name, "..");
-    blk_buf[1].inode_num = (uint32_t)parent_inode_num;
+    blk_buf[1].inode_num = (mofs_uint32_t)parent_inode_num;
 
     ret = write_file_data_block(child_inode_num, blk_buf, 0U, 1U, &written_blk_num, &fraction);
     if (ret != 0) {
@@ -57,23 +58,23 @@ static int write_dot_entries(int child_inode_num, int parent_inode_num)
     return 0;
 }
 
-static bool is_dot_or_dotdot_name(const char *name)
+static mofs_bool is_dot_or_dotdot_name(const char *name)
 {
     if (name == NULL) {
-        return false;
+        return MOFS_FALSE;
     }
 
     return (mofs_strcmp(name, ".") == 0) || (mofs_strcmp(name, "..") == 0);
 }
 
-static int is_directory_empty(int inode_num, bool *is_empty)
+static int is_directory_empty(int inode_num, mofs_bool *is_empty)
 {
     int            ret          = 0;
     mofs_inode_t   inode;
     mofs_dirent_t *buf          = NULL;
     unsigned int   read_blk_num = 0U;
-    size_t         fraction     = 0U;
-    bool           empty        = true;
+    mofs_size_t         fraction     = 0U;
+    mofs_bool           empty        = MOFS_TRUE;
     unsigned int   dir_blk_num  = 0U;
 
     if ((inode_num < 0) || (is_empty == NULL)) {
@@ -114,11 +115,11 @@ static int is_directory_empty(int inode_num, bool *is_empty)
         for (unsigned int dir_idx = 0U; dir_idx < dirent_num; dir_idx++) {
             if ((buf[dir_idx].inode_num != 0U) && (buf[dir_idx].name[0] != '\0') &&
                 !is_dot_or_dotdot_name(buf[dir_idx].name)) {
-                empty = false;
+                empty = MOFS_FALSE;
                 break;
             }
         }
-        if (empty == false) {
+        if (empty == MOFS_FALSE) {
             break;
         }
     }
@@ -151,9 +152,9 @@ int find_dir_entry(char *component, int parent_inode_num, int *child_inode_num)
 {
     int          ret            = 0;
     int          parent_blk_num = 0;
-    bool         found          = false;
+    mofs_bool         found          = MOFS_FALSE;
     void        *buf            = NULL;
-    size_t       fraction       = 0;
+    mofs_size_t       fraction       = 0;
     mofs_inode_t inode_buf;
     unsigned int read_blk_num = 0;
 
@@ -191,18 +192,18 @@ int find_dir_entry(char *component, int parent_inode_num, int *child_inode_num)
             for (int j = 0; j < dirent_num; j++) {
                 if (mofs_strcmp(dirent[j].name, component) == 0) {
                     *child_inode_num = dirent[j].inode_num;
-                    found            = true;
+                    found            = MOFS_TRUE;
                     break;
                 }
             }
 
-            if (found == true) {
+            if (found == MOFS_TRUE) {
                 break;
             }
         }
     }
 
-    if ((ret == 0) && (found == false)) {
+    if ((ret == 0) && (found == MOFS_FALSE)) {
         ret = MOFS_ENOENT;
     }
 
@@ -236,9 +237,9 @@ int remove_dir_entry(const char *component, int parent_inode_num)
 {
     int          ret            = 0;
     int          parent_blk_num = 0;
-    bool         found          = false;
+    mofs_bool         found          = MOFS_FALSE;
     void        *buf            = NULL;
-    size_t       fraction       = 0U;
+    mofs_size_t       fraction       = 0U;
     mofs_inode_t parent_inode;
     unsigned int read_blk_num    = 0U;
     unsigned int written_blk_num = 0U;
@@ -286,12 +287,12 @@ int remove_dir_entry(const char *component, int parent_inode_num)
             mofs_dirent_t *dirent = &((mofs_dirent_t *)buf)[dir_idx];
             if ((dirent->inode_num != 0U) && (mofs_strcmp(dirent->name, component) == 0)) {
                 mofs_memset(dirent, 0, sizeof(mofs_dirent_t));
-                found = true;
+                found = MOFS_TRUE;
                 break;
             }
         }
 
-        if (found == true) {
+        if (found == MOFS_TRUE) {
             /* Persist the modified block; directory i_size is unchanged. */
             ret = write_file_data_block(parent_inode_num, buf, (unsigned int)blk_idx, 1U, &written_blk_num, &fraction);
             if (ret != 0) {
@@ -304,9 +305,9 @@ int remove_dir_entry(const char *component, int parent_inode_num)
         }
     }
 
-    if ((ret == 0) && (found == false)) {
+    if ((ret == 0) && (found == MOFS_FALSE)) {
         ret = MOFS_ENOENT;
-    } else if ((ret == 0) && (found == true)) {
+    } else if ((ret == 0) && (found == MOFS_TRUE)) {
         ret = mofs_inode_stamp_now(&parent_inode, MOFS_INODE_TIME_MTIME | MOFS_INODE_TIME_CTIME);
         if (ret == 0) {
             ret = mofs_write_inode(parent_inode_num, &parent_inode);
@@ -347,10 +348,10 @@ int add_dir_entry(const char *component, int parent_inode_num, int child_inode_n
     mofs_dirent_t *dirent_buf       = NULL;
     unsigned int   read_blk_num     = 0U;
     unsigned int   written_blk_num  = 0U;
-    size_t         fraction         = 0U;
-    size_t         name_len         = 0U;
-    bool           found_reusable   = false;
-    bool           allocated_newblk = false;
+    mofs_size_t         fraction         = 0U;
+    mofs_size_t         name_len         = 0U;
+    mofs_bool           found_reusable   = MOFS_FALSE;
+    mofs_bool           allocated_newblk = MOFS_FALSE;
     unsigned int   reusable_idx     = 0U;
     unsigned int   entries_per_blk  = ctx.sp_blk.blk_size / sizeof(mofs_dirent_t);
     unsigned int   append_entry_idx = 0U;
@@ -422,7 +423,7 @@ int add_dir_entry(const char *component, int parent_inode_num, int child_inode_n
             }
             if ((!found_reusable) &&
                 ((dirent_buf[dir_idx].inode_num == 0U) || (dirent_buf[dir_idx].name[0] == '\0'))) {
-                found_reusable = true;
+                found_reusable = MOFS_TRUE;
                 reusable_idx   = blk_idx * entries_per_blk + dir_idx;
             }
         }
@@ -447,7 +448,7 @@ int add_dir_entry(const char *component, int parent_inode_num, int child_inode_n
         if (ret != 0) {
             goto out;
         }
-        allocated_newblk = true;
+        allocated_newblk = MOFS_TRUE;
         mofs_memset(dirent_buf, 0, ctx.sp_blk.blk_size);
     } else {
         /* Reuse existing block that contains the chosen target slot. */
@@ -464,7 +465,7 @@ int add_dir_entry(const char *component, int parent_inode_num, int child_inode_n
     /* Write entry payload to selected slot. */
     mofs_memset(&dirent_buf[target_in_blk], 0, sizeof(mofs_dirent_t));
     mofs_strcpy(dirent_buf[target_in_blk].name, component);
-    dirent_buf[target_in_blk].inode_num = (uint32_t)child_inode_num;
+    dirent_buf[target_in_blk].inode_num = (mofs_uint32_t)child_inode_num;
 
     ret = write_file_data_block(parent_inode_num, dirent_buf, target_blk_idx, 1U, &written_blk_num, &fraction);
     if (ret != 0) {
@@ -477,7 +478,7 @@ int add_dir_entry(const char *component, int parent_inode_num, int child_inode_n
 
     if (ret == 0) {
         if (!found_reusable) {
-            /* Only true append consumes logical size; tombstone reuse keeps size. */
+            /* Only MOFS_TRUE append consumes logical size; tombstone reuse keeps size. */
             parent_inode.i_size += sizeof(mofs_dirent_t);
         }
         ret = mofs_inode_stamp_now(&parent_inode, MOFS_INODE_TIME_MTIME | MOFS_INODE_TIME_CTIME);
@@ -524,13 +525,13 @@ out:
  * @return MOFS_EPERM or MOFS_EACCES on permission failure.
  * @return Non-zero errno value propagated from lower helpers.
  */
-int mofs_mkdir_core(const char *path, mode_t mode)
+int mofs_mkdir_core(const char *path, mofs_mode_t mode)
 {
     int              ret                = 0;
     int              child_inode_num    = -1;
-    bool             inode_allocated    = false;
-    bool             block_allocated    = false;
-    bool             parent_linked      = false;
+    mofs_bool             inode_allocated    = MOFS_FALSE;
+    mofs_bool             block_allocated    = MOFS_FALSE;
+    mofs_bool             parent_linked      = MOFS_FALSE;
     mofs_path_info_t path_info;
     mofs_user_ctx_t  user;
     mofs_inode_t     parent_inode;
@@ -556,7 +557,7 @@ int mofs_mkdir_core(const char *path, mode_t mode)
     if (ret != 0) {
         return ret;
     }
-    if (user.valid == false) {
+    if (user.valid == MOFS_FALSE) {
         return MOFS_EPERM;
     }
 
@@ -576,12 +577,12 @@ int mofs_mkdir_core(const char *path, mode_t mode)
     if (ret != 0) {
         goto rollback;
     }
-    inode_allocated = true;
+    inode_allocated = MOFS_TRUE;
 
     mofs_memset(&child_inode, 0, sizeof(child_inode));
     child_inode.i_size  = 0U;
     child_inode.i_links = 2U;
-    child_inode.i_mode  = (uint16_t)(MOFS_FTYPE_DIR | (mode & 0777U));
+    child_inode.i_mode  = (mofs_uint16_t)(MOFS_FTYPE_DIR | (mode & 0777U));
     child_inode.i_uid   = user.uid;
     child_inode.i_gid   = user.gid;
     ret                 = mofs_inode_stamp_now(&child_inode, MOFS_INODE_TIME_ALL);
@@ -597,7 +598,7 @@ int mofs_mkdir_core(const char *path, mode_t mode)
     if (ret != 0) {
         goto rollback;
     }
-    block_allocated = true;
+    block_allocated = MOFS_TRUE;
 
     ret = write_dot_entries(child_inode_num, path_info.parent_inode_num);
     if (ret != 0) {
@@ -622,7 +623,7 @@ int mofs_mkdir_core(const char *path, mode_t mode)
     if (ret != 0) {
         goto rollback;
     }
-    parent_linked = true;
+    parent_linked = MOFS_TRUE;
 
     ret = mofs_read_inode(path_info.parent_inode_num, &parent_inode);
     if (ret != 0) {
@@ -673,7 +674,7 @@ rollback:
 int mofs_rmdir_core(const char *path)
 {
     int              ret          = 0;
-    bool             is_empty     = false;
+    mofs_bool             is_empty     = MOFS_FALSE;
     unsigned int     used_blk_num = 0U;
     mofs_path_info_t path_info;
     mofs_inode_t     target_inode;
@@ -704,7 +705,7 @@ int mofs_rmdir_core(const char *path)
         if (ret != 0) {
             return ret;
         }
-        if (user.valid == false) {
+        if (user.valid == MOFS_FALSE) {
             return MOFS_EPERM;
         }
         ret = mofs_read_inode(path_info.parent_inode_num, &parent_inode);
@@ -800,7 +801,7 @@ int mofs_opendir_core(const char *path, mofs_dirhandle_t **handle)
     if (ret == 0) {
         ret = mofs_get_caller_user(&user);
         if (ret == 0) {
-            if (user.valid == false) {
+            if (user.valid == MOFS_FALSE) {
                 ret = MOFS_EPERM;
             }
         }
@@ -830,7 +831,7 @@ int mofs_opendir_core(const char *path, mofs_dirhandle_t **handle)
             dirhandle_pool[index].inode_num     = inode_num;
             dirhandle_pool[index].dirent_offset = 0;
             dirhandle_pool[index].dirent_buf    = (mofs_dirent_t){0};
-            dirhandle_pool[index].used          = true;
+            dirhandle_pool[index].used          = MOFS_TRUE;
         }
     }
 
@@ -853,13 +854,13 @@ int mofs_closedir_core(mofs_dirhandle_t **handle)
 {
     int ret = 0;
 
-    if ((handle == NULL) || (*handle == NULL) || ((*handle)->used == false)) {
+    if ((handle == NULL) || (*handle == NULL) || ((*handle)->used == MOFS_FALSE)) {
         ret = MOFS_EINVAL;
     } else {
         (*handle)->inode_num     = 0;
         (*handle)->dirent_offset = 0;
         (*handle)->dirent_buf    = (mofs_dirent_t){0};
-        (*handle)->used          = false;
+        (*handle)->used          = MOFS_FALSE;
         *handle                  = NULL;
     }
     return ret;
@@ -888,14 +889,14 @@ int mofs_readdir_core(mofs_dirhandle_t **handle)
     mofs_user_ctx_t user;
     mofs_dirent_t  *buf = NULL;
     mofs_dirent_t   dirent_tmp;
-    size_t          fraction = 0;
+    mofs_size_t          fraction = 0;
     unsigned int    start_block;
     unsigned int    start_idx;
     unsigned int    entries_num;
-    bool            found        = false;
+    mofs_bool            found        = MOFS_FALSE;
     unsigned int    read_blk_num = 0;
 
-    if ((handle == NULL) || (*handle == NULL) || ((*handle)->used == false)) {
+    if ((handle == NULL) || (*handle == NULL) || ((*handle)->used == MOFS_FALSE)) {
         ret = MOFS_EINVAL;
     }
 
@@ -909,7 +910,7 @@ int mofs_readdir_core(mofs_dirhandle_t **handle)
     if (ret == 0) {
         ret = mofs_get_caller_user(&user);
         if (ret == 0) {
-            if (user.valid == false) {
+            if (user.valid == MOFS_FALSE) {
                 ret = MOFS_EPERM;
             }
         }
@@ -948,26 +949,26 @@ int mofs_readdir_core(mofs_dirhandle_t **handle)
                 for (; start_idx < entries_num; start_idx++) {
                     mofs_memcpy(&dirent_tmp, buf + start_idx, sizeof(mofs_dirent_t));
                     if ((dirent_tmp.inode_num != 0) && (dirent_tmp.name[0] != '\0')) {
-                        found = true;
+                        found = MOFS_TRUE;
                         break;
                     }
                 }
                 /* Reset the index for the next block */
-                if (found == false) {
+                if (found == MOFS_FALSE) {
                     start_idx = 0;
                 }
             } else {
                 break;
             }
 
-            if (found == true) {
+            if (found == MOFS_TRUE) {
                 break;
             }
         }
     }
 
     if (ret == 0) {
-        if (found == true) {
+        if (found == MOFS_TRUE) {
             mofs_memcpy(&(*handle)->dirent_buf, &dirent_tmp, sizeof(mofs_dirent_t));
             (*handle)->dirent_offset = start_block * (ctx.sp_blk.blk_size / sizeof(mofs_dirent_t)) + start_idx + 1U;
         } else {

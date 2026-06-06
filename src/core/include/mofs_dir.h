@@ -22,10 +22,10 @@
 /* Directory handle */
 struct mofs_dirhandle
 {
-    bool          used;
-    int           inode_num;
-    unsigned int  dirent_offset;
-    mofs_dirent_t dirent_buf;
+    mofs_bool         used;
+    int               inode_num;
+    unsigned int      dirent_offset;
+    mofs_dirent_t     dirent_buf;
 };
 
 /* Directory handle pool */
@@ -38,7 +38,7 @@ extern mofs_dirhandle_t dirhandle_pool[MOFS_DIRHANDLE_POOL_SIZE];
 int find_dir_entry(char *component, int parent_inode_num, int *child_inode_num);
 int remove_dir_entry(const char *component, int parent_inode_num);
 int add_dir_entry(const char *component, int parent_inode_num, int child_inode_num);
-int mofs_mkdir_core(const char *path, mode_t mode);
+int mofs_mkdir_core(const char *path, mofs_mode_t mode);
 int mofs_rmdir_core(const char *path);
 
 int mofs_opendir_core(const char *path, mofs_dirhandle_t **handle);

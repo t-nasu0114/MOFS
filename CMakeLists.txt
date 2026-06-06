@@ -23,8 +23,7 @@ endif()
 
 # original headers
 include_directories(${PROJECT_SOURCE_DIR}/include)
-# OS dependent headers
-include_directories(src/os/${PLATFORM}/include)
+include_directories(${PROJECT_SOURCE_DIR}/src/port/include)
 
 # -----------------------------------------------------------------------------
 # Library setting parts
@@ -43,6 +42,9 @@ set(POSIX_API_LAYER_LIB_NAME posix_api)
 # -----------------------------------------------------------------------------
 # build parts
 # -----------------------------------------------------------------------------
+
+# build port (HAL contract) part
+add_subdirectory(src/port)
 
 # build OS service part
 add_subdirectory(src/os/${PLATFORM}/service)

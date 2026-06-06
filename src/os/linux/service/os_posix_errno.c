@@ -1,4 +1,4 @@
-#include <mofs_mem.h>
+#include <mofs_port_mem.h>
 #include <pthread.h>
 
 static pthread_key_t  mofs_errno_key;
