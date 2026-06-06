@@ -3,7 +3,6 @@
 #include <setjmp.h>
 
 #include <cmocka.h>
-#include <errno.h>
 #include <mofs_core.h>
 #include <mofs_dir.h>
 #include <mofs_errno.h>
@@ -97,7 +96,7 @@ static void test_traverse_denied_without_execute_on_parent(void **state)
     assert_int_equal(ret, MOFS_EACCES);
 
     assert_int_equal(mofs_stat("/locked/open", &st), -1);
-    assert_int_equal(errno, EACCES);
+    assert_int_equal(mofs_errno, MOFS_EACCES);
 }
 
 static void test_create_denied_without_search_on_parent(void **state)
@@ -133,7 +132,7 @@ static void test_stat_denied_on_unreadable_file(void **state)
 
     assert_int_equal(mofs_set_caller_user((uid_t)1001, (gid_t)1001, getpid()), 0);
     assert_int_equal(mofs_stat("/secret.txt", &st), -1);
-    assert_int_equal(errno, EACCES);
+    assert_int_equal(mofs_errno, MOFS_EACCES);
 }
 
 static void test_opendir_denied_on_unreadable_directory(void **state)
@@ -148,7 +147,7 @@ static void test_opendir_denied_on_unreadable_directory(void **state)
     assert_int_equal(mofs_set_caller_user((uid_t)1001, (gid_t)1001, getpid()), 0);
     handle = mofs_opendir("/privdir");
     assert_null(handle);
-    assert_int_equal(errno, EACCES);
+    assert_int_equal(mofs_errno, MOFS_EACCES);
 }
 
 static void test_unlink_denied_without_parent_write(void **state)
@@ -166,7 +165,7 @@ static void test_unlink_denied_without_parent_write(void **state)
 
     assert_int_equal(mofs_set_caller_user((uid_t)1001, (gid_t)1001, getpid()), 0);
     assert_int_equal(mofs_unlink("/parent/target.txt"), -1);
-    assert_int_equal(errno, EACCES);
+    assert_int_equal(mofs_errno, MOFS_EACCES);
 }
 
 static void test_read_denied_for_other_user_without_permission(void **state)
@@ -186,7 +185,7 @@ static void test_read_denied_for_other_user_without_permission(void **state)
     assert_int_equal(mofs_set_caller_user((uid_t)1001, (gid_t)1001, getpid()), 0);
     nread = mofs_read(handle, buf, sizeof(buf));
     assert_int_equal(nread, -1);
-    assert_int_equal(errno, EACCES);
+    assert_int_equal(mofs_errno, MOFS_EACCES);
 
     assert_int_equal(mofs_set_caller_user((uid_t)0, (gid_t)0, getpid()), 0);
     assert_int_equal(mofs_close(handle), 0);

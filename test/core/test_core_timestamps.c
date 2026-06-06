@@ -3,7 +3,6 @@
 #include <setjmp.h>
 
 #include <cmocka.h>
-#include <errno.h>
 #include <mofs_core.h>
 #include <mofs_errno.h>
 #include <mofs_inode.h>

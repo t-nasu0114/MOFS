@@ -26,6 +26,11 @@ static void mofs_fuse_bind_request_caller(void)
     }
 }
 
+static int fuse_neg_errno_from_mofs(void)
+{
+    return -(mofs_to_os_errno(mofs_errno));
+}
+
 struct fuse_operations op = {
     .init    = mofs_init_fuse,
     .destroy = mofs_destroy_fuse,
@@ -220,7 +225,7 @@ int mofs_getattr_fuse(const char *path, struct stat *stbuf, struct fuse_file_inf
         stbuf->st_ctime = stat.st_ctime_sec;
         return 0;
     }
-    return -errno;
+    return fuse_neg_errno_from_mofs();
 }
 
 /**
@@ -247,10 +252,10 @@ int mofs_truncate_fuse(const char *path, off_t size, struct fuse_file_info *fi)
     /* Prefer ftruncate when FUSE passes an open handle (e.g. ftruncate(2) on open fd). */
     if ((fi != NULL) && (fi->fh != 0U)) {
         if (mofs_ftruncate((mofs_filehandle_t *)(uintptr_t)fi->fh, size) != 0) {
-            return -errno;
+            return fuse_neg_errno_from_mofs();
         }
     } else if (mofs_truncate(path, size) != 0) {
-        return -errno;
+        return fuse_neg_errno_from_mofs();
     }
 
     return 0;
@@ -289,7 +294,7 @@ int mofs_open_fuse(const char *path, struct fuse_file_info *fi)
 
     handle = mofs_open(path, mofs_flags, mode);
     if (handle == NULL) {
-        return -errno;
+        return fuse_neg_errno_from_mofs();
     }
 
     fi->fh = (uint64_t)(uintptr_t)handle;
@@ -329,7 +334,7 @@ int mofs_create_fuse(const char *path, mode_t mode, struct fuse_file_info *fi)
 
     handle = mofs_open(path, mofs_flags, mofs_mode);
     if (handle == NULL) {
-        return -errno;
+        return fuse_neg_errno_from_mofs();
     }
 
     fi->fh = (uint64_t)(uintptr_t)handle;
@@ -365,7 +370,7 @@ int mofs_release_fuse(const char *path, struct fuse_file_info *fi)
     fi->fh = 0;
 
     if (mofs_close(handle) != 0) {
-        return -errno;
+        return fuse_neg_errno_from_mofs();
     }
 
     return 0;
@@ -390,7 +395,7 @@ int mofs_unlink_fuse(const char *path)
         return -(mofs_to_os_errno(MOFS_EINVAL));
     }
     if (mofs_unlink(path) != 0) {
-        return -errno;
+        return fuse_neg_errno_from_mofs();
     }
     return 0;
 }
@@ -425,7 +430,7 @@ int mofs_mkdir_fuse(const char *path, mode_t mode)
     }
 
     if (mofs_mkdir(path, masked_mode) != 0) {
-        return -errno;
+        return fuse_neg_errno_from_mofs();
     }
     return 0;
 }
@@ -449,7 +454,7 @@ int mofs_rmdir_fuse(const char *path)
         return -(mofs_to_os_errno(MOFS_EINVAL));
     }
     if (mofs_rmdir(path) != 0) {
-        return -errno;
+        return fuse_neg_errno_from_mofs();
     }
     return 0;
 }
@@ -489,7 +494,7 @@ int mofs_readdir_fuse(const char *path, void *buf, fuse_fill_dir_t filler, off_t
 
     handle = mofs_opendir(path);
     if (handle == NULL) {
-        return -errno;
+        return fuse_neg_errno_from_mofs();
     }
 
     /* offset is a readdir cookie, not byte offset. */
@@ -512,11 +517,11 @@ int mofs_readdir_fuse(const char *path, void *buf, fuse_fill_dir_t filler, off_t
     }
 
     while (true) {
-        errno  = 0;
+        mofs_errno = 0;
         dirent = mofs_readdir(handle);
         if (dirent == NULL) {
-            if (errno != 0) {
-                ret = -errno;
+            if (mofs_errno != 0) {
+                ret = fuse_neg_errno_from_mofs();
             }
             break;
         }
@@ -539,7 +544,7 @@ int mofs_readdir_fuse(const char *path, void *buf, fuse_fill_dir_t filler, off_t
 
 out:
     if ((mofs_closedir(handle) != 0) && (ret == 0)) {
-        ret = -errno;
+        ret = fuse_neg_errno_from_mofs();
     }
     return ret;
 }
@@ -577,7 +582,7 @@ int mofs_read_fuse(const char *path, char *buf, size_t size, off_t offset, struc
 
     ret = mofs_pread((mofs_filehandle_t *)(uintptr_t)(fi->fh), buf, size, offset);
     if (ret < 0) {
-        return -errno;
+        return fuse_neg_errno_from_mofs();
     }
 
     return ret;
@@ -616,7 +621,7 @@ int mofs_write_fuse(const char *path, const char *buf, size_t size, off_t offset
 
     ret = mofs_pwrite((mofs_filehandle_t *)(uintptr_t)(fi->fh), buf, size, offset);
     if (ret < 0) {
-        return -errno;
+        return fuse_neg_errno_from_mofs();
     }
 
     return ret;

@@ -3,7 +3,6 @@
 #include <setjmp.h>
 
 #include <cmocka.h>
-#include <errno.h>
 #include <mofs_core.h>
 #include <mofs_file.h>
 #include <mofs_posix.h>
@@ -61,10 +60,10 @@ static void test_TC_P1_008_stat_root(void **state)
     int         ret   = 0;
 
     (void)state;
-    errno = 0;
+    mofs_errno = 0;
     ret   = mofs_stat("/", &stbuf);
     assert_int_equal(ret, 0);
-    assert_int_equal(errno, 0);
+    assert_int_equal(mofs_errno, 0);
     assert_int_not_equal((unsigned int)stbuf.st_mode & MOFS_FTYPE_DIR, 0U);
 }
 
@@ -75,10 +74,10 @@ static void test_TC_P1_009_stat_missing_path(void **state)
     int         ret   = 0;
 
     (void)state;
-    errno = 0;
+    mofs_errno = 0;
     ret   = mofs_stat("/no_such_file", &stbuf);
     assert_int_equal(ret, -1);
-    assert_int_equal(errno, ENOENT);
+    assert_int_equal(mofs_errno, MOFS_ENOENT);
 }
 
 int main(void)

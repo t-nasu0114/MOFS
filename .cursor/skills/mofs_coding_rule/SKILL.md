@@ -32,9 +32,12 @@ MOFS の実装を行うときに使います。
 ### 2.4 エラー値（MOFS errno）
 
 - 成功は `0`。失敗時は `mofs_errno.h` の `MOFS_E*`（POSIX の errno 番号に揃えた正の整数）を返す。
-- OS の `errno` を MOFS 側の値に揃えるときは `get_errno()` を使う（実装はプラットフォーム側、例: `errno_linux.c`）。
+- core 層の API は戻り値で `MOFS_E*` を返す。OS の `errno` は core から更新しない。
+- OS の `errno` を MOFS 側の値に揃えるときは `get_errno()` を使う（実装はプラットフォーム側、例: `os_errno.c`）。
 - OS の errno 値と明示的に変換するときは `os_to_mofs_errno` / `mofs_to_os_errno` を使う。マッピングに無い値は `MOFS_EIO` / `EIO` に落とす実装になっている。
 - 引数不正など FS 独自の検証失敗には `MOFS_EINVAL` を使う例がある。
+- POSIX 層（`src/posix/`）は OS の `errno` を更新せず、スレッドローカルな `mofs_errno`（`MOFS_E*` 値）を更新する。公開 API は `include/posix/mofs_posix_errno.h` の `mofs_errno` マクロ。
+- `mofs_errno_location()` の実装は OS 抽象層（例: Linux では `os_posix_errno.c` の `pthread_key_t`）。非 Linux 向けは同シグネチャで差し替える。
 
 ### 2.5 ブロック I/O とレイアウト定数
 
@@ -55,7 +58,8 @@ MOFS の実装を行うときに使います。
 
 ### 2.9 FUSE コールバックと errno の符号
 
-- libfuse のコールバックでは、MOFS 側の正の `MOFS_E*` を負の OS errno に変換して返す（例: `return -(mofs_to_os_errno(ret));`）。
+- libfuse のコールバックでは、POSIX 層 API 失敗後に `mofs_errno`（`MOFS_E*`）を読み、`mofs_to_os_errno()` で OS errno に変換して負値で返す（例: `return -(mofs_to_os_errno(mofs_errno));`）。
+- core API を直接呼ぶ箇所では、戻り値の `MOFS_E*` を `mofs_to_os_errno()` 経由で返す。
 
 ## 3. 個別ルール
 
@@ -66,10 +70,16 @@ MOFS の実装を行うときに使います。
 - `mofs_format` は `mofs_format.c` で定義されているが、現状トップレベル `include/` には宣言がなく、`mkfs` 側で `extern` 宣言している（移行予定のコメントあり）。新規コードではこのずれを踏まえるか、ヘッダに載せるなど方針を揃える。
 - ここに実装される関数は POSIX に近い実装としておく。
 
+### 3.1.1 `src/posix`（POSIX API 層）
+
+- `mofs_*`（`_core` なし）API は core を呼び出し、失敗時に `mofs_errno` を更新する。`<errno.h>` に依存しない。
+- 成功時は `mofs_errno` をクリアしない（POSIX `errno` と同様）。`mofs_readdir` の EOF 時も `mofs_errno` を変更しない。
+
 ### 3.2 `src/os/linux`（OS 抽象の Linux 実装）
 
 - `devio_linux.c` はファイル先頭で `#define _GNU_SOURCE` してからシステムヘッダを読む。
-- `get_errno` / `os_to_mofs_errno` / `mofs_to_os_errno` の実体は `errno_linux.c` に置き、`<errno.h>` の定数と `mofs_errno.h` を対応付ける。
+- `get_errno` / `os_to_mofs_errno` / `mofs_to_os_errno` の実体は `os_errno.c` に置き、`<errno.h>` の定数と `mofs_errno.h` を対応付ける。
+- `mofs_errno_location()` の実体は `os_posix_errno.c` に置き、`pthread_key_t` でスレッドごとの `mofs_errno` スロットを確保する。
 
 ### 3.3 `src/proc/linux/fuse`（FUSE 統合）
 

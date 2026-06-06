@@ -3,7 +3,6 @@
 #include <setjmp.h>
 
 #include <cmocka.h>
-#include <errno.h>
 #include <mofs_core.h>
 #include <mofs_errno.h>
 #include <mofs_file.h>
@@ -258,7 +257,7 @@ static void test_eisdir(void **state)
     assert_int_equal(mofs_mkdir("/truncdir", 0755U), 0);
     ret = mofs_truncate("/truncdir", 0);
     assert_int_equal(ret, -1);
-    assert_int_equal(errno, EISDIR);
+    assert_int_equal(mofs_errno, MOFS_EISDIR);
     assert_int_equal(mofs_rmdir("/truncdir"), 0);
 }
 
@@ -274,7 +273,7 @@ static void test_ftruncate_ebadf(void **state)
     handle = mofs_open("/rdonly.txt", MOFS_OFLAG_RDONLY, 0U);
     assert_non_null(handle);
     assert_int_equal(mofs_ftruncate(handle, 0), -1);
-    assert_int_equal(errno, EBADF);
+    assert_int_equal(mofs_errno, MOFS_EBADF);
     assert_int_equal(mofs_close(handle), 0);
     assert_int_equal(mofs_unlink("/rdonly.txt"), 0);
 }

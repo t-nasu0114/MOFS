@@ -3,7 +3,6 @@
 #include <setjmp.h>
 
 #include <cmocka.h>
-#include <errno.h>
 #include <mofs_core.h>
 #include <mofs_errno.h>
 #include <mofs_file.h>
@@ -236,7 +235,7 @@ static void test_write_at_max_file_size_returns_efbig(void **state)
 
     written = mofs_pwrite(handle, &byte, 1U, (off_t)max_bytes);
     assert_int_equal(written, -1);
-    assert_int_equal(errno, EFBIG);
+    assert_int_equal(mofs_errno, MOFS_EFBIG);
 
     assert_int_equal(mofs_close(handle), 0);
     assert_int_equal(mofs_unlink("/atlimit.bin"), 0);

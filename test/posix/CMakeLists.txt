@@ -30,3 +30,17 @@ mofs_add_cmocka_test(test_posix_misc
         ${OS_SERVICE_LIB_NAME}
         mofs_test_fixture
 )
+
+find_package(Threads REQUIRED)
+
+# Per-thread mofs_errno isolation tests.
+mofs_add_cmocka_test(test_posix_errno_tls
+    SOURCES test_posix_errno_tls.c
+    LINK_LIBS
+        ${POSIX_API_LAYER_LIB_NAME}
+        ${CORE_LIB_NAME}
+        ${CORE_FORMAT_LIB_NAME}
+        ${OS_SERVICE_LIB_NAME}
+        mofs_test_fixture
+        Threads::Threads
+)
