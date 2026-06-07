@@ -3,12 +3,11 @@
 #include <setjmp.h>
 
 #include <cmocka.h>
-#include <errno.h>
 #include <mofs_core.h>
 #include <mofs_errno.h>
 #include <mofs_inode.h>
 #include <mofs_posix.h>
-#include <mofs_user.h>
+#include <mofs_port_user.h>
 #include <unistd.h>
 
 #include "../fixtures/test_fixture.h"
@@ -29,12 +28,12 @@ static int setup_timestamp_fixture(void **state)
         (void)mofs_test_remove_file(image_path);
         return -1;
     }
-    ret = mofs_set_caller_user((uid_t)0, (gid_t)0, getpid());
+    ret = mofs_set_caller_user((mofs_uid_t)0, (mofs_gid_t)0, getpid());
     if (ret != 0) {
         (void)mofs_test_remove_file(image_path);
         return -1;
     }
-    ret = mofs_init_core(image_path, false, 0U, 0U);
+    ret = mofs_init_core(image_path, MOFS_FALSE, 0U, 0U);
     if (ret != 0) {
         (void)mofs_clear_caller_user();
         (void)mofs_test_remove_file(image_path);

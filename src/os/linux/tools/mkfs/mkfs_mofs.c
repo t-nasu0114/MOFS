@@ -1,17 +1,17 @@
 
 #include <mofs_format.h>
-#include <mofs_util.h>
+#include <mofs_port_log.h>
 #include <stdlib.h>
 #include <unistd.h>
 
 static void print_usage(const char *prog_name)
 {
-    MOFS_INF("Usage: %s [OPTIONS] DEVICE_FILE\n", prog_name);
-    MOFS_INF("Options:\n");
-    MOFS_INF("  -s, --size <NUM>   Specify file system size in blocks (default: auto)\n");
-    MOFS_INF("  -b, --block <NUM> Logical block size in bytes (This value must be a (512 * (2 ^ n)) and between 512 "
+    mofs_log_inf("Usage: %s [OPTIONS] DEVICE_FILE\n", prog_name);
+    mofs_log_inf("Options:\n");
+    mofs_log_inf("  -s, --size <NUM>   Specify file system size in blocks (default: auto)\n");
+    mofs_log_inf("  -b, --block <NUM> Logical block size in bytes (This value must be a (512 * (2 ^ n)) and between 512 "
              "and 65536)\n");
-    MOFS_INF("  -h, --help         Display this help message\n");
+    mofs_log_inf("  -h, --help         Display this help message\n");
 }
 
 int main(int argc, char *argv[])
@@ -42,14 +42,14 @@ int main(int argc, char *argv[])
     if (optind < argc) {
         device_file = argv[optind];
     } else {
-        MOFS_ERR("Device file is required.\n");
+        mofs_log_err("Device file is required.\n");
         print_usage(argv[0]);
         return 1;
     }
 
     /* Format device */
     if (mofs_format(device_file, fs_size, blk_size_param) != 0) {
-        MOFS_ERR("Format error\n");
+        mofs_log_err("Format error\n");
         return 1;
     }
 

@@ -1,11 +1,12 @@
+#include <mofs_port_errno.h>
 
 #include <mofs_core.h>
 #include <mofs_devio.h>
 #include <mofs_file.h>
-#include <mofs_mem.h>
-#include <mofs_time.h>
-#include <mofs_type.h>
-#include <mofs_util.h>
+#include <mofs_port_mem.h>
+#include <mofs_port_time.h>
+#include <mofs_types.h>
+#include <mofs_port_log.h>
 
 /**
  * @brief Zero-fill one block at the specified block index.
@@ -16,28 +17,28 @@
  * @return 0 on success.
  * @return Non-zero errno value from `get_errno()` on seek/write failure.
  */
-static int clear_blocks(int fd, uint64_t block_num, uint32_t blk_bytes)
+static int clear_blocks(int fd, mofs_uint64_t block_num, mofs_uint32_t blk_bytes)
 {
     int   ret    = 0;
     void *buf    = NULL;
-    off_t offset = (off_t)((uint64_t)block_num * (uint64_t)blk_bytes);
+    mofs_off_t offset = (mofs_off_t)((mofs_uint64_t)block_num * (mofs_uint64_t)blk_bytes);
 
-    buf = mofs_malloc((size_t)blk_bytes);
+    buf = mofs_malloc((mofs_size_t)blk_bytes);
     if (buf == NULL) {
         return get_errno();
     }
 
-    mofs_memset(buf, 0, (size_t)blk_bytes);
+    mofs_memset(buf, 0, (mofs_size_t)blk_bytes);
 
     if (dev_lseek(fd, offset, MOFS_SEEK_SET) < 0) {
-        MOFS_ERR("Seek error at block %lu", (unsigned long)block_num);
+        mofs_log_err("Seek error at block %lu", (unsigned long)block_num);
         ret = get_errno();
         mofs_free(buf);
         return ret;
     }
 
-    if (dev_write(fd, buf, (size_t)blk_bytes) != (int)(size_t)blk_bytes) {
-        MOFS_ERR("Write error at block %lu", (unsigned long)block_num);
+    if (dev_write(fd, buf, (mofs_size_t)blk_bytes) != (int)(mofs_size_t)blk_bytes) {
+        mofs_log_err("Write error at block %lu", (unsigned long)block_num);
         ret = get_errno();
         mofs_free(buf);
         return ret;
@@ -68,23 +69,23 @@ int mofs_format(const char *device_file, int fs_size, int blk_size)
 {
     int                ret           = 0;
     int                fd            = -1;
-    uint32_t           eff_blk_bytes = MOFS_BLK_SIZE_DEFAULT;
+    mofs_uint32_t           eff_blk_bytes = MOFS_BLK_SIZE_DEFAULT;
     unsigned long long dev_size;
 
     fd = dev_open(device_file, MOFS_IO_OPEN_FLAG_RDWR);
     if (fd < 0) {
-        MOFS_ERR("Open %s error\n", device_file);
+        mofs_log_err("Open %s error\n", device_file);
         ret = get_errno();
         goto out1;
     }
 
     if (blk_size >= 0) {
-        eff_blk_bytes = (uint32_t)blk_size;
+        eff_blk_bytes = (mofs_uint32_t)blk_size;
     }
 
     ret = mofs_validate_logical_blk_size(eff_blk_bytes);
     if (ret != 0) {
-        MOFS_ERR("Unsupported block size %u\n", eff_blk_bytes);
+        mofs_log_err("Unsupported block size %u\n", eff_blk_bytes);
         goto out2;
     }
 
@@ -94,36 +95,36 @@ int mofs_format(const char *device_file, int fs_size, int blk_size)
     } else {
         dev_size = dev_get_size(fd, &ret);
         if (ret != 0) {
-            MOFS_ERR("Get device size error\n");
+            mofs_log_err("Get device size error\n");
             goto out2;
         }
         /* Device tail bytes smaller than one logical block are ignored. */
     }
 
     /* Calculate device layout */
-    uint32_t bpi = eff_blk_bytes * 4U; /* Bytes-per-inode = 16KB equivalent at default 4K blocks */
+    mofs_uint32_t bpi = eff_blk_bytes * 4U; /* Bytes-per-inode = 16KB equivalent at default 4K blocks */
 
-    uint64_t hole_blk_num = dev_size / (unsigned long long)eff_blk_bytes;
-    uint64_t inode_num    = (dev_size + (unsigned long long)(bpi - 1U)) / (unsigned long long)bpi;
-    uint64_t inode_bitmap_blk_num =
-        (inode_num + (uint64_t)eff_blk_bytes * 8ULL - 1ULL) / ((uint64_t)eff_blk_bytes * 8ULL);
-    uint64_t inode_table_blk_num =
-        (inode_num * sizeof(mofs_inode_t) + (uint64_t)eff_blk_bytes - 1ULL) / (uint64_t)eff_blk_bytes;
-    uint64_t data_bitmap_blk_num =
-        (hole_blk_num + (uint64_t)eff_blk_bytes * 8ULL - 1ULL) / ((uint64_t)eff_blk_bytes * 8ULL);
-    uint64_t meta_reserved = 1ULL + inode_bitmap_blk_num + data_bitmap_blk_num + inode_table_blk_num;
-    uint64_t data_blk_num  = 0;
+    mofs_uint64_t hole_blk_num = dev_size / (unsigned long long)eff_blk_bytes;
+    mofs_uint64_t inode_num    = (dev_size + (unsigned long long)(bpi - 1U)) / (unsigned long long)bpi;
+    mofs_uint64_t inode_bitmap_blk_num =
+        (inode_num + (mofs_uint64_t)eff_blk_bytes * 8ULL - 1ULL) / ((mofs_uint64_t)eff_blk_bytes * 8ULL);
+    mofs_uint64_t inode_table_blk_num =
+        (inode_num * sizeof(mofs_inode_t) + (mofs_uint64_t)eff_blk_bytes - 1ULL) / (mofs_uint64_t)eff_blk_bytes;
+    mofs_uint64_t data_bitmap_blk_num =
+        (hole_blk_num + (mofs_uint64_t)eff_blk_bytes * 8ULL - 1ULL) / ((mofs_uint64_t)eff_blk_bytes * 8ULL);
+    mofs_uint64_t meta_reserved = 1ULL + inode_bitmap_blk_num + data_bitmap_blk_num + inode_table_blk_num;
+    mofs_uint64_t data_blk_num  = 0;
 
     if (hole_blk_num <= meta_reserved) {
         ret = MOFS_EINVAL;
-        MOFS_ERR("Device too small for MOFS metadata with this block size\n");
+        mofs_log_err("Device too small for MOFS metadata with this block size\n");
         goto out2;
     }
 
     data_blk_num = hole_blk_num - meta_reserved;
 
     /* Clear super, bitmaps and inode table block */
-    for (uint64_t i = 0; i < meta_reserved; i++) {
+    for (mofs_uint64_t i = 0; i < meta_reserved; i++) {
         ret = clear_blocks(fd, i, eff_blk_bytes);
         if (ret != 0) {
             goto out2;
@@ -134,28 +135,28 @@ int mofs_format(const char *device_file, int fs_size, int blk_size)
     mofs_superblock_t superblock;
     mofs_memset(&superblock, 0, sizeof(superblock));
     superblock.magic              = MOFS_MAGIC_NUM;
-    superblock.hole_blk_num       = (uint32_t)hole_blk_num;
-    superblock.inode_num          = (uint32_t)inode_num;
-    superblock.data_blk_num       = (uint32_t)data_blk_num;
+    superblock.hole_blk_num       = (mofs_uint32_t)hole_blk_num;
+    superblock.inode_num          = (mofs_uint32_t)inode_num;
+    superblock.data_blk_num       = (mofs_uint32_t)data_blk_num;
     superblock.inode_bitmap_start = 1U;
-    superblock.data_bitmap_start  = superblock.inode_bitmap_start + (uint32_t)inode_bitmap_blk_num;
-    superblock.inode_table_start  = superblock.data_bitmap_start + (uint32_t)data_bitmap_blk_num;
-    superblock.data_region_start  = superblock.inode_table_start + (uint32_t)inode_table_blk_num;
+    superblock.data_bitmap_start  = superblock.inode_bitmap_start + (mofs_uint32_t)inode_bitmap_blk_num;
+    superblock.inode_table_start  = superblock.data_bitmap_start + (mofs_uint32_t)data_bitmap_blk_num;
+    superblock.data_region_start  = superblock.inode_table_start + (mofs_uint32_t)inode_table_blk_num;
     superblock.blk_size           = eff_blk_bytes;
 
-    if (hole_blk_num > (uint64_t)UINT32_MAX) {
+    if (hole_blk_num > (mofs_uint64_t)MOFS_UINT32_MAX) {
         ret = MOFS_EINVAL;
         goto out2;
     }
 
     if (dev_lseek(fd, 0, MOFS_SEEK_SET) < 0) {
-        MOFS_ERR("Seek error at superblock");
+        mofs_log_err("Seek error at superblock");
         ret = get_errno();
         goto out2;
     }
 
     if (dev_write(fd, &superblock, sizeof(superblock)) != (int)sizeof(superblock)) {
-        MOFS_ERR("Write error at superblock");
+        mofs_log_err("Write error at superblock");
         ret = get_errno();
         goto out2;
     }
@@ -163,29 +164,29 @@ int mofs_format(const char *device_file, int fs_size, int blk_size)
     /* Make Root Directory */
 
     /* Allocate the No.2 inode for root directory and mark it as used in inode bitmap */
-    uint8_t root_inode_bitmap = 0x04; /* Mark the No.2 inode as used. Note that it's not No.0 */
-    if (dev_lseek(fd, (off_t)((uint64_t)superblock.inode_bitmap_start * (uint64_t)eff_blk_bytes), MOFS_SEEK_SET) < 0) {
-        MOFS_ERR("Seek error at root inode bitmap");
+    mofs_uint8_t root_inode_bitmap = 0x04; /* Mark the No.2 inode as used. Note that it's not No.0 */
+    if (dev_lseek(fd, (mofs_off_t)((mofs_uint64_t)superblock.inode_bitmap_start * (mofs_uint64_t)eff_blk_bytes), MOFS_SEEK_SET) < 0) {
+        mofs_log_err("Seek error at root inode bitmap");
         ret = get_errno();
         goto out2;
     }
 
     if (dev_write(fd, &root_inode_bitmap, 1) != 1) {
-        MOFS_ERR("Write error at root inode bitmap");
+        mofs_log_err("Write error at root inode bitmap");
         ret = get_errno();
         goto out2;
     }
 
     /* Allocate data block 0 (dir content) and block 1 (list node); mark both used */
-    uint8_t root_data_bitmap = 0x03;
-    if (dev_lseek(fd, (off_t)((uint64_t)superblock.data_bitmap_start * (uint64_t)eff_blk_bytes), MOFS_SEEK_SET) < 0) {
-        MOFS_ERR("Seek error at root data bitmap");
+    mofs_uint8_t root_data_bitmap = 0x03;
+    if (dev_lseek(fd, (mofs_off_t)((mofs_uint64_t)superblock.data_bitmap_start * (mofs_uint64_t)eff_blk_bytes), MOFS_SEEK_SET) < 0) {
+        mofs_log_err("Seek error at root data bitmap");
         ret = get_errno();
         goto out2;
     }
 
     if (dev_write(fd, &root_data_bitmap, 1) != 1) {
-        MOFS_ERR("Write error at root data bitmap");
+        mofs_log_err("Write error at root data bitmap");
         ret = get_errno();
         goto out2;
     }
@@ -193,44 +194,44 @@ int mofs_format(const char *device_file, int fs_size, int blk_size)
     /* Clear root directory data block to avoid stale dirents from old images. */
     ret = clear_blocks(fd, superblock.data_region_start, eff_blk_bytes);
     if (ret != 0) {
-        MOFS_ERR("Clear error at root directory data block");
+        mofs_log_err("Clear error at root directory data block");
         goto out2;
     }
 
     /* List node at data block 1 points to directory data block 0. */
     ret = clear_blocks(fd, superblock.data_region_start + 1ULL, eff_blk_bytes);
     if (ret != 0) {
-        MOFS_ERR("Clear error at root list node block");
+        mofs_log_err("Clear error at root list node block");
         goto out2;
     }
 
     {
-        void                  *list_buf = mofs_malloc((size_t)eff_blk_bytes);
+        void                  *list_buf = mofs_malloc((mofs_size_t)eff_blk_bytes);
         mofs_data_list_hdr_t  *list_hdr;
-        uint32_t              *list_ptr;
+        mofs_uint32_t              *list_ptr;
 
         if (list_buf == NULL) {
             ret = get_errno();
             goto out2;
         }
-        mofs_memset(list_buf, 0, (size_t)eff_blk_bytes);
+        mofs_memset(list_buf, 0, (mofs_size_t)eff_blk_bytes);
         list_hdr           = (mofs_data_list_hdr_t *)list_buf;
         list_hdr->next_abs = 0U;
         list_hdr->nr_ptrs  = 1U;
         /* Single pointer: root directory content block. */
-        list_ptr           = (uint32_t *)((unsigned char *)list_buf + sizeof(mofs_data_list_hdr_t));
+        list_ptr           = (mofs_uint32_t *)((unsigned char *)list_buf + sizeof(mofs_data_list_hdr_t));
         list_ptr[0]        = superblock.data_region_start;
 
         if (dev_lseek(fd,
-                      (off_t)((uint64_t)(superblock.data_region_start + 1ULL) * (uint64_t)eff_blk_bytes),
+                      (mofs_off_t)((mofs_uint64_t)(superblock.data_region_start + 1ULL) * (mofs_uint64_t)eff_blk_bytes),
                       MOFS_SEEK_SET) < 0) {
-            MOFS_ERR("Seek error at root list node");
+            mofs_log_err("Seek error at root list node");
             ret = get_errno();
             mofs_free(list_buf);
             goto out2;
         }
-        if (dev_write(fd, list_buf, (size_t)eff_blk_bytes) != (int)(size_t)eff_blk_bytes) {
-            MOFS_ERR("Write error at root list node");
+        if (dev_write(fd, list_buf, (mofs_size_t)eff_blk_bytes) != (int)(mofs_size_t)eff_blk_bytes) {
+            mofs_log_err("Write error at root list node");
             ret = get_errno();
             mofs_free(list_buf);
             goto out2;
@@ -253,7 +254,7 @@ int mofs_format(const char *device_file, int fs_size, int blk_size)
 
         ret = mofs_now(&now);
         if (ret != 0) {
-            MOFS_ERR("Failed to set root inode timestamps");
+            mofs_log_err("Failed to set root inode timestamps");
             goto out2;
         }
         root_inode.i_atime = now;
@@ -262,16 +263,16 @@ int mofs_format(const char *device_file, int fs_size, int blk_size)
     }
 
     if (dev_lseek(fd,
-                  (off_t)((uint64_t)superblock.inode_table_start * (uint64_t)eff_blk_bytes) +
-                      (off_t)(2 * sizeof(mofs_inode_t)),
+                  (mofs_off_t)((mofs_uint64_t)superblock.inode_table_start * (mofs_uint64_t)eff_blk_bytes) +
+                      (mofs_off_t)(2 * sizeof(mofs_inode_t)),
                   MOFS_SEEK_SET) < 0) {
-        MOFS_ERR("Seek error at root inode");
+        mofs_log_err("Seek error at root inode");
         ret = get_errno();
         goto out2;
     }
 
     if (dev_write(fd, &root_inode, sizeof(root_inode)) != (int)sizeof(root_inode)) {
-        MOFS_ERR("Write error at root inode");
+        mofs_log_err("Write error at root inode");
         ret = get_errno();
         goto out2;
     }

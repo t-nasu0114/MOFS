@@ -3,11 +3,10 @@
 #include <setjmp.h>
 
 #include <cmocka.h>
-#include <errno.h>
 #include <mofs_core.h>
 #include <mofs_file.h>
 #include <mofs_posix.h>
-#include <mofs_user.h>
+#include <mofs_port_user.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -41,12 +40,12 @@ static int setup_posix_file_fixture(void **state)
         (void)mofs_test_remove_file(image_path);
         return -1;
     }
-    ret = mofs_set_caller_user((uid_t)0, (gid_t)0, getpid());
+    ret = mofs_set_caller_user((mofs_uid_t)0, (mofs_gid_t)0, getpid());
     if (ret != 0) {
         (void)mofs_test_remove_file(image_path);
         return -1;
     }
-    ret = mofs_init_core(image_path, false, 0U, 0U);
+    ret = mofs_init_core(image_path, MOFS_FALSE, 0U, 0U);
     if (ret != 0) {
         (void)mofs_clear_caller_user();
         (void)mofs_test_remove_file(image_path);
@@ -78,10 +77,10 @@ static void test_TC_P0_001_open_existing_rdonly(void **state)
     mofs_filehandle_t *handle = NULL;
 
     (void)state;
-    errno  = 0;
+    mofs_errno  = 0;
     handle = mofs_open("/existing.txt", MOFS_OFLAG_RDONLY, 0U);
     assert_non_null(handle);
-    assert_int_equal(errno, 0);
+    assert_int_equal(mofs_errno, 0);
     assert_int_equal(mofs_close(handle), 0);
 }
 
@@ -91,10 +90,10 @@ static void test_TC_P0_002_open_missing_path(void **state)
     mofs_filehandle_t *handle = NULL;
 
     (void)state;
-    errno  = 0;
+    mofs_errno  = 0;
     handle = mofs_open("/missing.txt", MOFS_OFLAG_RDONLY, 0U);
     assert_null(handle);
-    assert_int_equal(errno, ENOENT);
+    assert_int_equal(mofs_errno, MOFS_ENOENT);
 }
 
 /* TC-P0-003: open without access mode should fail with EINVAL. */
@@ -103,10 +102,10 @@ static void test_TC_P0_003_open_without_accmode(void **state)
     mofs_filehandle_t *handle = NULL;
 
     (void)state;
-    errno  = 0;
+    mofs_errno  = 0;
     handle = mofs_open("/existing.txt", 0, 0U);
     assert_null(handle);
-    assert_int_equal(errno, EINVAL);
+    assert_int_equal(mofs_errno, MOFS_EINVAL);
 }
 
 /* TC-P0-004: open with CREAT on missing path should create file. */
@@ -115,10 +114,10 @@ static void test_TC_P0_004_open_with_creat_on_missing_path(void **state)
     mofs_filehandle_t *handle = NULL;
 
     (void)state;
-    errno  = 0;
+    mofs_errno  = 0;
     handle = mofs_open("/created.txt", MOFS_OFLAG_CREAT | MOFS_OFLAG_RDWR, 0644U);
     assert_non_null(handle);
-    assert_int_equal(errno, 0);
+    assert_int_equal(mofs_errno, 0);
     assert_int_equal(mofs_close(handle), 0);
 }
 
@@ -128,10 +127,10 @@ static void test_TC_P0_005_open_directory_flag_for_regular_file(void **state)
     mofs_filehandle_t *handle = NULL;
 
     (void)state;
-    errno  = 0;
+    mofs_errno  = 0;
     handle = mofs_open("/existing.txt", MOFS_OFLAG_RDONLY | MOFS_OFLAG_DIRECTORY, 0U);
     assert_null(handle);
-    assert_int_equal(errno, ENOTDIR);
+    assert_int_equal(mofs_errno, MOFS_ENOTDIR);
 }
 
 /* TC-P0-006: write then read file content successfully. */
@@ -163,10 +162,10 @@ static void test_TC_P0_007_read_with_null_handle(void **state)
     int ret = 0;
 
     (void)state;
-    errno = 0;
+    mofs_errno = 0;
     ret   = mofs_read(NULL, NULL, 1U);
     assert_int_equal(ret, -1);
-    assert_int_equal(errno, EINVAL);
+    assert_int_equal(mofs_errno, MOFS_EINVAL);
 }
 
 /* TC-P0-008: read with zero size should fail with EINVAL. */
@@ -175,13 +174,13 @@ static void test_TC_P0_008_read_with_zero_size(void **state)
     int ret = 0;
 
     (void)state;
-    errno = 0;
+    mofs_errno = 0;
     ret   = mofs_read(NULL, NULL, 0U);
     assert_int_equal(ret, -1);
-    assert_int_equal(errno, EINVAL);
+    assert_int_equal(mofs_errno, MOFS_EINVAL);
 }
 
-/* TC-P0-009: second read at EOF should return zero without errno update. */
+/* TC-P0-009: second read at EOF should return zero without mofs_errno update. */
 static void test_TC_P0_009_read_at_eof(void **state)
 {
     mofs_filehandle_t *write_handle = NULL;
@@ -202,10 +201,10 @@ static void test_TC_P0_009_read_at_eof(void **state)
     read_n = mofs_read(read_handle, buf, sizeof(buf));
     assert_int_equal(read_n, (int)strlen(payload));
 
-    errno  = 0;
+    mofs_errno  = 0;
     read_n = mofs_read(read_handle, buf, sizeof(buf));
     assert_int_equal(read_n, 0);
-    assert_int_equal(errno, 0);
+    assert_int_equal(mofs_errno, 0);
     assert_int_equal(mofs_close(read_handle), 0);
 }
 
@@ -220,16 +219,16 @@ static void test_TC_P0_010_close_success(void **state)
     assert_int_equal(mofs_close(handle), 0);
 }
 
-/* TC-P0-011: close with invalid handle should fail and set errno. */
+/* TC-P0-011: close with invalid handle should fail and set mofs_errno. */
 static void test_TC_P0_011_close_with_invalid_handle(void **state)
 {
     int ret = 0;
 
     (void)state;
-    errno = 0;
+    mofs_errno = 0;
     ret   = mofs_close(NULL);
     assert_true(ret != 0);
-    assert_true(errno != 0);
+    assert_true(mofs_errno != 0);
 }
 
 int main(void)

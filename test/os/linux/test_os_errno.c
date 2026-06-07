@@ -5,6 +5,7 @@
 #include <cmocka.h>
 #include <errno.h>
 #include <mofs_errno.h>
+#include <mofs_port_errno.h>
 
 /* TC-P2-005: os_to_mofs_errno maps EINVAL to MOFS_EINVAL. */
 static void test_TC_P2_005_os_to_mofs_errno_einval(void **state)

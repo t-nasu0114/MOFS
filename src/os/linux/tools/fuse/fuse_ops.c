@@ -7,10 +7,12 @@
 #include <fcntl.h>
 #include <fuse.h>
 #include <mofs_errno.h>
+#include <mofs_port_errno.h>
 #include <mofs_lifecycle.h>
 #include <mofs_posix.h>
-#include <mofs_user.h>
+#include <mofs_port_user.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <sys/stat.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,8 +24,13 @@ static void mofs_fuse_bind_request_caller(void)
     struct fuse_context *ctx = fuse_get_context();
 
     if (ctx != NULL) {
-        (void)mofs_set_caller_for_peer_process(ctx->uid, ctx->gid, ctx->pid);
+        (void)mofs_set_caller_for_peer_process((mofs_uid_t)ctx->uid, (mofs_gid_t)ctx->gid, (mofs_pid_t)ctx->pid);
     }
+}
+
+static int fuse_neg_errno_from_mofs(void)
+{
+    return -(mofs_to_os_errno(mofs_errno));
 }
 
 struct fuse_operations op = {
@@ -155,13 +162,13 @@ void *mofs_init_fuse(struct fuse_conn_info *conn, struct fuse_config *cfg)
 
     fuse_ctx = (mofs_fuse_ctx_t *)context->private_data;
 
-    ret = mofs_init_core(fuse_ctx->devfile_path, true, (uint32_t)geteuid(), (uint32_t)getegid());
+    ret = mofs_init_core(fuse_ctx->devfile_path, MOFS_TRUE, (mofs_uint32_t)geteuid(), (mofs_uint32_t)getegid());
     if (ret != 0) {
         fprintf(stderr, "Failed to initialize MOFS core: %d\n", ret);
         exit(EXIT_FAILURE);
     }
 
-    (void)mofs_set_caller_for_peer_process(geteuid(), getegid(), getpid());
+    (void)mofs_set_caller_for_peer_process((mofs_uid_t)geteuid(), (mofs_gid_t)getegid(), (mofs_pid_t)getpid());
 
     return (void *)(fuse_ctx);
 }
@@ -220,7 +227,7 @@ int mofs_getattr_fuse(const char *path, struct stat *stbuf, struct fuse_file_inf
         stbuf->st_ctime = stat.st_ctime_sec;
         return 0;
     }
-    return -errno;
+    return fuse_neg_errno_from_mofs();
 }
 
 /**
@@ -247,10 +254,10 @@ int mofs_truncate_fuse(const char *path, off_t size, struct fuse_file_info *fi)
     /* Prefer ftruncate when FUSE passes an open handle (e.g. ftruncate(2) on open fd). */
     if ((fi != NULL) && (fi->fh != 0U)) {
         if (mofs_ftruncate((mofs_filehandle_t *)(uintptr_t)fi->fh, size) != 0) {
-            return -errno;
+            return fuse_neg_errno_from_mofs();
         }
     } else if (mofs_truncate(path, size) != 0) {
-        return -errno;
+        return fuse_neg_errno_from_mofs();
     }
 
     return 0;
@@ -289,7 +296,7 @@ int mofs_open_fuse(const char *path, struct fuse_file_info *fi)
 
     handle = mofs_open(path, mofs_flags, mode);
     if (handle == NULL) {
-        return -errno;
+        return fuse_neg_errno_from_mofs();
     }
 
     fi->fh = (uint64_t)(uintptr_t)handle;
@@ -329,7 +336,7 @@ int mofs_create_fuse(const char *path, mode_t mode, struct fuse_file_info *fi)
 
     handle = mofs_open(path, mofs_flags, mofs_mode);
     if (handle == NULL) {
-        return -errno;
+        return fuse_neg_errno_from_mofs();
     }
 
     fi->fh = (uint64_t)(uintptr_t)handle;
@@ -365,7 +372,7 @@ int mofs_release_fuse(const char *path, struct fuse_file_info *fi)
     fi->fh = 0;
 
     if (mofs_close(handle) != 0) {
-        return -errno;
+        return fuse_neg_errno_from_mofs();
     }
 
     return 0;
@@ -390,7 +397,7 @@ int mofs_unlink_fuse(const char *path)
         return -(mofs_to_os_errno(MOFS_EINVAL));
     }
     if (mofs_unlink(path) != 0) {
-        return -errno;
+        return fuse_neg_errno_from_mofs();
     }
     return 0;
 }
@@ -425,7 +432,7 @@ int mofs_mkdir_fuse(const char *path, mode_t mode)
     }
 
     if (mofs_mkdir(path, masked_mode) != 0) {
-        return -errno;
+        return fuse_neg_errno_from_mofs();
     }
     return 0;
 }
@@ -449,7 +456,7 @@ int mofs_rmdir_fuse(const char *path)
         return -(mofs_to_os_errno(MOFS_EINVAL));
     }
     if (mofs_rmdir(path) != 0) {
-        return -errno;
+        return fuse_neg_errno_from_mofs();
     }
     return 0;
 }
@@ -489,7 +496,7 @@ int mofs_readdir_fuse(const char *path, void *buf, fuse_fill_dir_t filler, off_t
 
     handle = mofs_opendir(path);
     if (handle == NULL) {
-        return -errno;
+        return fuse_neg_errno_from_mofs();
     }
 
     /* offset is a readdir cookie, not byte offset. */
@@ -512,11 +519,11 @@ int mofs_readdir_fuse(const char *path, void *buf, fuse_fill_dir_t filler, off_t
     }
 
     while (true) {
-        errno  = 0;
+        mofs_errno = 0;
         dirent = mofs_readdir(handle);
         if (dirent == NULL) {
-            if (errno != 0) {
-                ret = -errno;
+            if (mofs_errno != 0) {
+                ret = fuse_neg_errno_from_mofs();
             }
             break;
         }
@@ -539,7 +546,7 @@ int mofs_readdir_fuse(const char *path, void *buf, fuse_fill_dir_t filler, off_t
 
 out:
     if ((mofs_closedir(handle) != 0) && (ret == 0)) {
-        ret = -errno;
+        ret = fuse_neg_errno_from_mofs();
     }
     return ret;
 }
@@ -577,7 +584,7 @@ int mofs_read_fuse(const char *path, char *buf, size_t size, off_t offset, struc
 
     ret = mofs_pread((mofs_filehandle_t *)(uintptr_t)(fi->fh), buf, size, offset);
     if (ret < 0) {
-        return -errno;
+        return fuse_neg_errno_from_mofs();
     }
 
     return ret;
@@ -616,7 +623,7 @@ int mofs_write_fuse(const char *path, const char *buf, size_t size, off_t offset
 
     ret = mofs_pwrite((mofs_filehandle_t *)(uintptr_t)(fi->fh), buf, size, offset);
     if (ret < 0) {
-        return -errno;
+        return fuse_neg_errno_from_mofs();
     }
 
     return ret;

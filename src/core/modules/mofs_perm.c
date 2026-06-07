@@ -20,7 +20,7 @@ int mofs_check_open_permission(int flags, const mofs_user_ctx_t *user, const mof
 {
     int          ret             = 0;
     unsigned int open_perm_flags = 0;
-    bool         is_determined   = false;
+    mofs_bool         is_determined   = MOFS_FALSE;
 
     if ((user == NULL) || (inode == NULL)) {
         ret = MOFS_EINVAL;
@@ -34,7 +34,7 @@ int mofs_check_open_permission(int flags, const mofs_user_ctx_t *user, const mof
 
     if ((flags & MOFS_OFLAG_EXEC) == MOFS_OFLAG_EXEC) {
         open_perm_flags = MOFS_OFLAG_EXEC;
-        is_determined   = true;
+        is_determined   = MOFS_TRUE;
     }
     if ((flags & MOFS_OFLAG_SEARCH) == MOFS_OFLAG_SEARCH) {
         if (is_determined) {
@@ -43,7 +43,7 @@ int mofs_check_open_permission(int flags, const mofs_user_ctx_t *user, const mof
             goto out;
         } else {
             open_perm_flags = MOFS_OFLAG_SEARCH;
-            is_determined   = true;
+            is_determined   = MOFS_TRUE;
         }
     }
     if ((flags & MOFS_OFLAG_RDONLY) == MOFS_OFLAG_RDONLY) {
@@ -53,7 +53,7 @@ int mofs_check_open_permission(int flags, const mofs_user_ctx_t *user, const mof
             goto out;
         } else {
             open_perm_flags = MOFS_OFLAG_RDONLY;
-            is_determined   = true;
+            is_determined   = MOFS_TRUE;
         }
     }
     if ((flags & MOFS_OFLAG_WRONLY) == MOFS_OFLAG_WRONLY) {
@@ -67,12 +67,12 @@ int mofs_check_open_permission(int flags, const mofs_user_ctx_t *user, const mof
             }
         } else {
             open_perm_flags = MOFS_OFLAG_WRONLY;
-            is_determined   = true;
+            is_determined   = MOFS_TRUE;
         }
     }
 
     if (is_determined) {
-        bool         is_member  = false;
+        mofs_bool         is_member  = MOFS_FALSE;
         unsigned int is_read    = 0;
         unsigned int is_write   = 0;
         unsigned int is_execute = 0;

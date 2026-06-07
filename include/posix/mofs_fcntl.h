@@ -1,7 +1,7 @@
 #ifndef __MOFS_POSIX_FCNTL__
 #define __MOFS_POSIX_FCNTL__
 
-#include <mofs_type.h>
+#include <mofs_types.h>
 
 /* Supported open flags (POSIX fcntl.h equivalent) */
 #define MOFS_OFLAG_RDONLY    0x0001
@@ -19,6 +19,6 @@
 
 typedef struct mofs_filehandle mofs_filehandle_t;
 
-mofs_filehandle_t *mofs_open(const char *path, int flags, mode_t mode);
+mofs_filehandle_t *mofs_open(const char *path, int flags, mofs_mode_t mode);
 
 #endif /* __MOFS_POSIX_FCNTL__ */

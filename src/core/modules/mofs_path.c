@@ -1,18 +1,19 @@
 #include <mofs_dir.h>
 #include <mofs_errno.h>
+#include <mofs_port_errno.h>
 #include <mofs_inode.h>
-#include <mofs_mem.h>
+#include <mofs_port_mem.h>
 #include <mofs_path.h>
 #include <mofs_perm.h>
-#include <mofs_str.h>
-#include <mofs_user.h>
+#include <mofs_port_str.h>
+#include <mofs_port_user.h>
 
-static int check_parent_traverse(bool check_access, const mofs_user_ctx_t *user, int parent_inode)
+static int check_parent_traverse(mofs_bool check_access, const mofs_user_ctx_t *user, int parent_inode)
 {
     int          ret = 0;
     mofs_inode_t inode;
 
-    if (check_access == false) {
+    if (check_access == MOFS_FALSE) {
         return 0;
     }
     if (parent_inode == MOFS_ROOT_INODE_NUM) {
@@ -58,10 +59,10 @@ int mofs_resolve_path(const char *path, unsigned int resolve_flags, mofs_path_in
     char            *path_copy    = NULL;
     char            *current      = NULL;
     char            *next         = NULL;
-    bool             require_leaf_inode;
-    bool             require_parent;
-    bool             allow_missing_leaf;
-    bool             check_access;
+    mofs_bool             require_leaf_inode;
+    mofs_bool             require_parent;
+    mofs_bool             allow_missing_leaf;
+    mofs_bool             check_access;
     mofs_user_ctx_t  user;
 
     if ((path == NULL) || (path_info == NULL) || (path[0] != '/')) {
@@ -84,7 +85,7 @@ int mofs_resolve_path(const char *path, unsigned int resolve_flags, mofs_path_in
         if (ret != 0) {
             return ret;
         }
-        if (user.valid == false) {
+        if (user.valid == MOFS_FALSE) {
             return MOFS_EPERM;
         }
     }

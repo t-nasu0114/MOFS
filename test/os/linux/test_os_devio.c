@@ -5,7 +5,7 @@
 #include <cmocka.h>
 #include <mofs_devio.h>
 #include <mofs_errno.h>
-#include <mofs_type.h>
+#include <mofs_types.h>
 #include <errno.h>
 
 #include "../../fixtures/test_fixture.h"

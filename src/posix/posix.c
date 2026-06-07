@@ -1,8 +1,3 @@
-/* Note:
-    1. APIs in this file updates errno for POSIX compatibility. Therefore, this file should be included after errno.h.
-    2. APIs in this file returns error codes defined in POSIX standard.
-*/
-#include <errno.h>
 #include <mofs_core.h>
 #include <mofs_dir.h>
 #include <mofs_errno.h>
@@ -10,17 +5,26 @@
 #include <mofs_path.h>
 #include <mofs_posix.h>
 
+static void posix_set_errno(int err)
+{
+    int *slot = mofs_errno_location();
+
+    if (slot != NULL) {
+        *slot = err;
+    }
+}
+
 /**
  * @brief Retrieve file status for a path in POSIX layer.
  *
  * Function behavior:
  * - Calls `mofs_stat_core()` to resolve the path and populate inode metadata.
- * - On failure, converts MOFS errno to OS errno and updates `errno`.
+ * - On failure, updates `mofs_errno` with a `MOFS_E*` value.
  *
  * @param[in] path NULL-terminated path string.
  * @param[out] stbuf Destination buffer for status fields.
  * @return 0 on success.
- * @return -1 on failure (with `errno` updated).
+ * @return -1 on failure (with `mofs_errno` updated).
  */
 int mofs_stat(const char *path, mofs_stat_t *stbuf)
 {
@@ -28,7 +32,7 @@ int mofs_stat(const char *path, mofs_stat_t *stbuf)
 
     err = mofs_stat_core(path, stbuf);
     if (err != 0) {
-        errno = mofs_to_os_errno(err);
+        posix_set_errno(err);
         return -1;
     }
 
@@ -40,12 +44,12 @@ int mofs_stat(const char *path, mofs_stat_t *stbuf)
  *
  * Function behavior:
  * - Calls `mofs_opendir_core()` to resolve and open the target directory.
- * - On failure, converts MOFS errno to OS errno and updates `errno`.
+ * - On failure, updates `mofs_errno` with a `MOFS_E*` value.
  * - Returns the opened directory handle on success.
  *
  * @param[in] path NULL-terminated directory path string.
  * @return Opened directory handle pointer on success.
- * @return NULL on failure (with `errno` updated).
+ * @return NULL on failure (with `mofs_errno` updated).
  */
 mofs_dirhandle_t *mofs_opendir(const char *path)
 {
@@ -54,7 +58,7 @@ mofs_dirhandle_t *mofs_opendir(const char *path)
 
     err = mofs_opendir_core(path, &handle);
     if (err != 0) {
-        errno = mofs_to_os_errno(err);
+        posix_set_errno(err);
     }
 
     return handle;
@@ -65,11 +69,11 @@ mofs_dirhandle_t *mofs_opendir(const char *path)
  *
  * Function behavior:
  * - Calls `mofs_closedir_core()` to release the opened directory handle.
- * - On failure, converts MOFS errno to OS errno and updates `errno`.
+ * - On failure, updates `mofs_errno` with a `MOFS_E*` value.
  *
  * @param[in] handle Directory handle to close.
  * @return 0 on success.
- * @return -1 on failure (with `errno` updated).
+ * @return -1 on failure (with `mofs_errno` updated).
  */
 int mofs_closedir(mofs_dirhandle_t *handle)
 {
@@ -77,8 +81,8 @@ int mofs_closedir(mofs_dirhandle_t *handle)
 
     err = mofs_closedir_core(&handle);
     if (err != 0) {
-        errno = mofs_to_os_errno(err);
-        err   = -1;
+        posix_set_errno(err);
+        err = -1;
     }
 
     return err;
@@ -90,8 +94,8 @@ int mofs_closedir(mofs_dirhandle_t *handle)
  * Function behavior:
  * - Calls `mofs_readdir_core()` to advance the directory cursor.
  * - Returns a pointer to the per-handle cached entry when a valid entry exists.
- * - Returns NULL at end-of-directory without modifying `errno`.
- * - On failure, returns NULL and updates `errno`.
+ * - Returns NULL at end-of-directory without modifying `mofs_errno`.
+ * - On failure, returns NULL and updates `mofs_errno`.
  *
  * @param[in] handle Opened directory handle.
  * @return Pointer to a valid directory entry on success.
@@ -110,7 +114,7 @@ mofs_dirent_t *mofs_readdir(mofs_dirhandle_t *handle)
             dirent = NULL;
         }
     } else {
-        errno = mofs_to_os_errno(err);
+        posix_set_errno(err);
     }
 
     return dirent;
@@ -121,23 +125,23 @@ mofs_dirent_t *mofs_readdir(mofs_dirhandle_t *handle)
  *
  * Function behavior:
  * - Calls `mofs_open_core()` with specified path and open flags.
- * - Converts MOFS error code to OS errno on failure.
+ * - Updates `mofs_errno` with a `MOFS_E*` value on failure.
  * - Returns an opened file handle on success.
  *
  * @param[in] path NULL-terminated file path string.
  * @param[in] flags Open flags (`MOFS_OFLAG_*`).
  * @param[in] mode File mode used for create path (currently passed through).
  * @return Opened file handle pointer on success.
- * @return NULL on failure (with `errno` updated).
+ * @return NULL on failure (with `mofs_errno` updated).
  */
-mofs_filehandle_t *mofs_open(const char *path, int flags, mode_t mode)
+mofs_filehandle_t *mofs_open(const char *path, int flags, mofs_mode_t mode)
 {
     int                err    = 0;
     mofs_filehandle_t *handle = NULL;
 
     err = mofs_open_core(path, flags, mode, &handle);
     if (err != 0) {
-        errno  = mofs_to_os_errno(err);
+        posix_set_errno(err);
         handle = NULL;
     }
 
@@ -149,11 +153,11 @@ mofs_filehandle_t *mofs_open(const char *path, int flags, mode_t mode)
  *
  * Function behavior:
  * - Calls `mofs_close_core()` to release internal file-handle resources.
- * - Converts MOFS error code to OS errno on failure.
+ * - Updates `mofs_errno` with a `MOFS_E*` value on failure.
  *
  * @param[in] handle Opened file handle to close.
  * @return 0 on success.
- * @return Non-zero on failure (with `errno` updated).
+ * @return Non-zero on failure (with `mofs_errno` updated).
  */
 int mofs_close(mofs_filehandle_t *handle)
 {
@@ -161,7 +165,7 @@ int mofs_close(mofs_filehandle_t *handle)
 
     err = mofs_close_core(&handle);
     if (err != 0) {
-        errno = mofs_to_os_errno(err);
+        posix_set_errno(err);
     }
 
     return err;
@@ -174,21 +178,21 @@ int mofs_close(mofs_filehandle_t *handle)
  * - Validates handle argument before read dispatch.
  * - Uses current `handle->file_offset` as read start offset.
  * - Calls `mofs_read_core()` and requests offset update on success.
- * - Converts MOFS error code to OS errno on failure.
+ * - Updates `mofs_errno` with a `MOFS_E*` value on failure.
  *
  * @param[in] handle Opened file handle.
  * @param[out] buf Destination buffer for read data.
  * @param[in] size Maximum number of bytes to read.
  * @return Number of bytes read on success.
- * @return -1 on failure (with `errno` updated).
+ * @return -1 on failure (with `mofs_errno` updated).
  */
-int mofs_read(mofs_filehandle_t *handle, void *buf, size_t size)
+int mofs_read(mofs_filehandle_t *handle, void *buf, mofs_size_t size)
 {
     if (handle == NULL) {
-        errno = EINVAL;
+        posix_set_errno(MOFS_EINVAL);
         return -1;
     }
-    return mofs_pread(handle, buf, size, (off_t)(handle->file_offset));
+    return mofs_pread(handle, buf, size, (mofs_off_t)(handle->file_offset));
 }
 
 /**
@@ -198,21 +202,21 @@ int mofs_read(mofs_filehandle_t *handle, void *buf, size_t size)
  * - Validates handle argument before write dispatch.
  * - Uses current `handle->file_offset` as write start offset.
  * - Calls `mofs_write_core()` and requests offset update on success.
- * - Converts MOFS error code to OS errno on failure.
+ * - Updates `mofs_errno` with a `MOFS_E*` value on failure.
  *
  * @param[in] handle Opened file handle.
  * @param[in] buf Source buffer containing bytes to write.
  * @param[in] size Number of bytes requested to write.
  * @return Number of bytes written on success.
- * @return -1 on failure (with `errno` updated).
+ * @return -1 on failure (with `mofs_errno` updated).
  */
-int mofs_write(mofs_filehandle_t *handle, const void *buf, size_t size)
+int mofs_write(mofs_filehandle_t *handle, const void *buf, mofs_size_t size)
 {
     if (handle == NULL) {
-        errno = EINVAL;
+        posix_set_errno(MOFS_EINVAL);
         return -1;
     }
-    return mofs_pwrite(handle, buf, size, (off_t)(handle->file_offset));
+    return mofs_pwrite(handle, buf, size, (mofs_off_t)(handle->file_offset));
 }
 
 /**
@@ -221,32 +225,32 @@ int mofs_write(mofs_filehandle_t *handle, const void *buf, size_t size)
  * Function behavior:
  * - Validates handle and offset arguments before read dispatch.
  * - Calls `mofs_read_core()` and requests offset update on success.
- * - Converts MOFS error code to OS errno on failure.
+ * - Updates `mofs_errno` with a `MOFS_E*` value on failure.
  *
  * @param[in] handle Opened file handle.
  * @param[out] buf Destination buffer for read data.
  * @param[in] size Maximum number of bytes to read.
  * @param[in] offset Read offset in bytes.
  * @return Number of bytes read on success.
- * @return -1 on failure (with `errno` updated).
+ * @return -1 on failure (with `mofs_errno` updated).
  */
-int mofs_pread(mofs_filehandle_t *handle, void *buf, size_t size, off_t offset)
+int mofs_pread(mofs_filehandle_t *handle, void *buf, mofs_size_t size, mofs_off_t offset)
 {
-    int    err          = 0;
-    int    ret          = 0;
-    off_t  read_offset  = offset;
-    off_t  max_offset   = (off_t)UINT32_MAX;
-    size_t read_size    = 0;
+    int    err         = 0;
+    int    ret         = 0;
+    mofs_off_t  read_offset = offset;
+    mofs_off_t  max_offset  = (mofs_off_t)MOFS_UINT32_MAX;
+    mofs_size_t read_size   = 0;
 
     if ((handle == NULL) || (offset < 0) || (offset > max_offset)) {
-        errno = EINVAL;
+        posix_set_errno(MOFS_EINVAL);
         return -1;
     }
 
-    err = mofs_read_core(&handle, buf, size, &read_offset, &read_size, true);
+    err = mofs_read_core(&handle, buf, size, &read_offset, &read_size, MOFS_TRUE);
     if (err != 0) {
-        errno = mofs_to_os_errno(err);
-        ret   = -1;
+        posix_set_errno(err);
+        ret = -1;
     } else {
         ret = (int)read_size;
     }
@@ -260,32 +264,32 @@ int mofs_pread(mofs_filehandle_t *handle, void *buf, size_t size, off_t offset)
  * Function behavior:
  * - Validates handle and offset arguments before write dispatch.
  * - Calls `mofs_write_core()` and requests offset update on success.
- * - Converts MOFS error code to OS errno on failure.
+ * - Updates `mofs_errno` with a `MOFS_E*` value on failure.
  *
  * @param[in] handle Opened file handle.
  * @param[in] buf Source buffer containing bytes to write.
  * @param[in] size Number of bytes requested to write.
  * @param[in] offset Write offset in bytes.
  * @return Number of bytes written on success.
- * @return -1 on failure (with `errno` updated).
+ * @return -1 on failure (with `mofs_errno` updated).
  */
-int mofs_pwrite(mofs_filehandle_t *handle, const void *buf, size_t size, off_t offset)
+int mofs_pwrite(mofs_filehandle_t *handle, const void *buf, mofs_size_t size, mofs_off_t offset)
 {
     int    err          = 0;
     int    ret          = 0;
-    off_t  write_offset = offset;
-    off_t  max_offset   = (off_t)UINT32_MAX;
-    size_t written_size = 0;
+    mofs_off_t  write_offset = offset;
+    mofs_off_t  max_offset   = (mofs_off_t)MOFS_UINT32_MAX;
+    mofs_size_t written_size = 0;
 
     if ((handle == NULL) || (offset < 0) || (offset > max_offset)) {
-        errno = EINVAL;
+        posix_set_errno(MOFS_EINVAL);
         return -1;
     }
 
-    err = mofs_write_core(&handle, buf, size, &write_offset, &written_size, true);
+    err = mofs_write_core(&handle, buf, size, &write_offset, &written_size, MOFS_TRUE);
     if (err != 0) {
-        errno = mofs_to_os_errno(err);
-        ret   = -1;
+        posix_set_errno(err);
+        ret = -1;
     } else {
         ret = (int)written_size;
     }
@@ -299,28 +303,27 @@ int mofs_pwrite(mofs_filehandle_t *handle, const void *buf, size_t size, off_t o
  * Function behavior:
  * - Resolves inode number from path via `mofs_path_to_inode_num()`.
  * - Calls `mofs_truncate_core()` to update file size.
- * - Converts MOFS error code to OS errno on failure.
+ * - Updates `mofs_errno` with a `MOFS_E*` value on failure.
  *
  * @param[in] path NULL-terminated file path string.
  * @param[in] length New file size in bytes.
  * @return 0 on success.
- * @return -1 on failure (with `errno` updated).
+ * @return -1 on failure (with `mofs_errno` updated).
  */
-int mofs_truncate(const char *path, off_t length)
+int mofs_truncate(const char *path, mofs_off_t length)
 {
     int inode_num = -1;
     int err       = 0;
 
-    /* Resolve path to inode; ENOENT and similar errors stay in MOFS errno space until conversion. */
     err = mofs_path_to_inode_num(path, &inode_num);
     if (err != 0) {
-        errno = mofs_to_os_errno(err);
+        posix_set_errno(err);
         return -1;
     }
 
     err = mofs_truncate_core(inode_num, length);
     if (err != 0) {
-        errno = mofs_to_os_errno(err);
+        posix_set_errno(err);
         return -1;
     }
 
@@ -333,30 +336,30 @@ int mofs_truncate(const char *path, off_t length)
  * Function behavior:
  * - Validates handle and confirms the handle is opened for writing.
  * - Calls `mofs_truncate_core()` with the handle inode number.
- * - Converts MOFS error code to OS errno on failure.
+ * - Updates `mofs_errno` with a `MOFS_E*` value on failure.
  *
  * @param[in] handle Opened file handle.
  * @param[in] length New file size in bytes.
  * @return 0 on success.
- * @return -1 on failure (with `errno` updated).
+ * @return -1 on failure (with `mofs_errno` updated).
  */
-int mofs_ftruncate(mofs_filehandle_t *handle, off_t length)
+int mofs_ftruncate(mofs_filehandle_t *handle, mofs_off_t length)
 {
     int err = 0;
 
-    if ((handle == NULL) || (handle->used == false)) {
-        errno = EBADF;
+    if ((handle == NULL) || (handle->used == MOFS_FALSE)) {
+        posix_set_errno(MOFS_EBADF);
         return -1;
     }
     /* POSIX ftruncate(2) requires a descriptor opened for writing. */
     if ((handle->open_flags & MOFS_OFLAG_WRONLY) == 0) {
-        errno = EBADF;
+        posix_set_errno(MOFS_EBADF);
         return -1;
     }
 
     err = mofs_truncate_core(handle->inode_num, length);
     if (err != 0) {
-        errno = mofs_to_os_errno(err);
+        posix_set_errno(err);
         return -1;
     }
 
@@ -368,11 +371,11 @@ int mofs_ftruncate(mofs_filehandle_t *handle, off_t length)
  *
  * Function behavior:
  * - Calls `mofs_unlink_core()` to remove the target file.
- * - Converts MOFS error code to OS errno on failure.
+ * - Updates `mofs_errno` with a `MOFS_E*` value on failure.
  *
  * @param[in] path NULL-terminated file path string.
  * @return 0 on success.
- * @return -1 on failure (with `errno` updated).
+ * @return -1 on failure (with `mofs_errno` updated).
  */
 int mofs_unlink(const char *path)
 {
@@ -380,7 +383,7 @@ int mofs_unlink(const char *path)
 
     err = mofs_unlink_core(path);
     if (err != 0) {
-        errno = mofs_to_os_errno(err);
+        posix_set_errno(err);
         return -1;
     }
 
@@ -392,20 +395,20 @@ int mofs_unlink(const char *path)
  *
  * Function behavior:
  * - Calls `mofs_mkdir_core()` to create the target directory.
- * - Converts MOFS error code to OS errno on failure.
+ * - Updates `mofs_errno` with a `MOFS_E*` value on failure.
  *
  * @param[in] path NULL-terminated directory path string.
  * @param[in] mode Permission bits for directory creation.
  * @return 0 on success.
- * @return -1 on failure (with `errno` updated).
+ * @return -1 on failure (with `mofs_errno` updated).
  */
-int mofs_mkdir(const char *path, mode_t mode)
+int mofs_mkdir(const char *path, mofs_mode_t mode)
 {
     int err = 0;
 
     err = mofs_mkdir_core(path, mode);
     if (err != 0) {
-        errno = mofs_to_os_errno(err);
+        posix_set_errno(err);
         return -1;
     }
 
@@ -417,11 +420,11 @@ int mofs_mkdir(const char *path, mode_t mode)
  *
  * Function behavior:
  * - Calls `mofs_rmdir_core()` to remove the target directory.
- * - Converts MOFS error code to OS errno on failure.
+ * - Updates `mofs_errno` with a `MOFS_E*` value on failure.
  *
  * @param[in] path NULL-terminated directory path string.
  * @return 0 on success.
- * @return -1 on failure (with `errno` updated).
+ * @return -1 on failure (with `mofs_errno` updated).
  */
 int mofs_rmdir(const char *path)
 {
@@ -429,7 +432,7 @@ int mofs_rmdir(const char *path)
 
     err = mofs_rmdir_core(path);
     if (err != 0) {
-        errno = mofs_to_os_errno(err);
+        posix_set_errno(err);
         return -1;
     }
 

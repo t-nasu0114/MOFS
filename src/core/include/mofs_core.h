@@ -10,7 +10,7 @@
 #include <mofs_format.h>
 #include <mofs_lifecycle.h>
 #include <mofs_posix.h>
-#include <mofs_type.h>
+#include <mofs_types.h>
 
 /*******************************************************
  * macros
@@ -29,7 +29,7 @@
 #define MOFS_BLK_SIZE_MIN     512U
 #define MOFS_BLK_SIZE_MAX     65536U
 
-static inline int mofs_validate_logical_blk_size(uint32_t blk_size)
+static inline int mofs_validate_logical_blk_size(mofs_uint32_t blk_size)
 {
     if ((blk_size < MOFS_BLK_SIZE_MIN) || (blk_size > MOFS_BLK_SIZE_MAX)) {
         return MOFS_EINVAL;
@@ -46,7 +46,7 @@ static inline int mofs_validate_logical_blk_size(uint32_t blk_size)
 #define MOFS_MAX_FILE_DATA_BLOCKS 1024U /* Max data blocks per file (list nodes excluded) */
 
 /** Number of file data pointers that fit in one on-disk list node block. */
-static inline unsigned int mofs_list_ptrs_per_node(uint32_t blk_size)
+static inline unsigned int mofs_list_ptrs_per_node(mofs_uint32_t blk_size)
 {
     unsigned int hdr_bytes = 8U; /* mofs_data_list_hdr: next_abs + nr_ptrs */
     if (blk_size <= hdr_bytes) {
@@ -56,14 +56,7 @@ static inline unsigned int mofs_list_ptrs_per_node(uint32_t blk_size)
 }
 
 /** Maximum file size in bytes after mount (`MOFS_MAX_FILE_DATA_BLOCKS * blk_size`). */
-uint64_t mofs_max_file_bytes(void);
-
-/* Bool type */
-#ifndef bool
-#define bool  unsigned int
-#define true  1U
-#define false 0U
-#endif
+mofs_uint64_t mofs_max_file_bytes(void);
 
 /* Access permission flags */
 #define MOFS_S_IRUSR   0000400U
@@ -93,41 +86,41 @@ uint64_t mofs_max_file_bytes(void);
 /* Super Block */
 typedef struct mofs_superblock
 {
-    uint32_t magic;        /* Magic Number of My Original File System */
-    uint32_t hole_blk_num; /* Block number of hole volume */
-    uint32_t inode_num;    /* inode number */
-    uint32_t data_blk_num; /* block Number of data block */
+    mofs_uint32_t magic;        /* Magic Number of My Original File System */
+    mofs_uint32_t hole_blk_num; /* Block number of hole volume */
+    mofs_uint32_t inode_num;    /* inode number */
+    mofs_uint32_t data_blk_num; /* block Number of data block */
 
     /* Start block number of each area */
-    uint32_t inode_bitmap_start;
-    uint32_t data_bitmap_start;
-    uint32_t inode_table_start;
-    uint32_t data_region_start;
+    mofs_uint32_t inode_bitmap_start;
+    mofs_uint32_t data_bitmap_start;
+    mofs_uint32_t inode_table_start;
+    mofs_uint32_t data_region_start;
 
-    uint32_t blk_size; /* Logical block size in bytes */
+    mofs_uint32_t blk_size; /* Logical block size in bytes */
 } mofs_superblock_t;
 
 /* On-disk list node header (one per list block in data region) */
 typedef struct mofs_data_list_hdr
 {
-    uint32_t next_abs; /* Absolute block of next list node, 0 if none */
-    uint32_t nr_ptrs;  /* Number of valid data block pointers following header */
+    mofs_uint32_t next_abs; /* Absolute block of next list node, 0 if none */
+    mofs_uint32_t nr_ptrs;  /* Number of valid data block pointers following header */
 } mofs_data_list_hdr_t;
 
 /* Inode (64 bytes on disk) */
 typedef struct mofs_inode
 {
-    uint32_t i_size;      /* File size in bytes */
-    uint16_t i_links;     /* Link count */
-    uint16_t i_mode;      /* Permission and file type */
-    uint32_t i_uid;       /* User ID */
-    uint32_t i_gid;       /* Group ID */
-    uint32_t i_data_head; /* Absolute block of first list node, 0 if no data mapping */
-    uint32_t i_nr_blocks; /* Number of file data blocks (not list nodes) */
-    uint64_t i_atime;     /* Last access time (Unix epoch seconds) */
-    uint64_t i_mtime;     /* Last modification time (Unix epoch seconds) */
-    uint64_t i_ctime;     /* Last status change time (Unix epoch seconds) */
-    uint32_t reserved[4]; /* Padding to 64 bytes */
+    mofs_uint32_t i_size;      /* File size in bytes */
+    mofs_uint16_t i_links;     /* Link count */
+    mofs_uint16_t i_mode;      /* Permission and file type */
+    mofs_uint32_t i_uid;       /* User ID */
+    mofs_uint32_t i_gid;       /* Group ID */
+    mofs_uint32_t i_data_head; /* Absolute block of first list node, 0 if no data mapping */
+    mofs_uint32_t i_nr_blocks; /* Number of file data blocks (not list nodes) */
+    mofs_uint64_t i_atime;     /* Last access time (Unix epoch seconds) */
+    mofs_uint64_t i_mtime;     /* Last modification time (Unix epoch seconds) */
+    mofs_uint64_t i_ctime;     /* Last status change time (Unix epoch seconds) */
+    mofs_uint32_t reserved[4]; /* Padding to 64 bytes */
 } mofs_inode_t;
 
 typedef char mofs_inode_size_must_be_64[(sizeof(mofs_inode_t) == 64U) ? 1 : -1];
@@ -138,7 +131,7 @@ typedef char mofs_inode_size_must_be_64[(sizeof(mofs_inode_t) == 64U) ? 1 : -1];
 
 typedef struct mofs_ctx
 {
-    bool              init;
+    mofs_bool         init;
     char             *dev_path;
     int               dev_fd;
     mofs_superblock_t sp_blk;

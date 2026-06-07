@@ -2,21 +2,26 @@
 add_library(${CORE_FORMAT_LIB_NAME} STATIC
     modules/mofs_format.c
 )
-target_link_libraries(${CORE_FORMAT_LIB_NAME} PUBLIC ${OS_SERVICE_LIB_NAME})
-target_include_directories(${CORE_FORMAT_LIB_NAME} PRIVATE
-    ${PLATFORM}/include
-    ./include
-)
+target_link_libraries(${CORE_FORMAT_LIB_NAME} PUBLIC ${OS_SERVICE_LIB_NAME} mofs_port)
+target_include_directories(${CORE_FORMAT_LIB_NAME} PRIVATE ./include)
 
 # Build MOFS core library
 add_library(${CORE_LIB_NAME} STATIC
     modules/mofs_core.c
     modules/mofs_block.c
+    modules/mofs_buffer.c
     modules/mofs_inode.c
     modules/mofs_dir.c
     modules/mofs_path.c
     modules/mofs_perm.c
     modules/mofs_file.c
 )
-target_link_libraries(${CORE_LIB_NAME} PUBLIC ${OS_SERVICE_LIB_NAME})
+target_link_libraries(${CORE_LIB_NAME} PUBLIC ${OS_SERVICE_LIB_NAME} mofs_port)
 target_include_directories(${CORE_LIB_NAME} PRIVATE ./include)
+
+# Buffer cache toggle: pass the macro so it overrides the header default.
+if(MOFS_ENABLE_BUFFER_CACHE)
+    target_compile_definitions(${CORE_LIB_NAME} PUBLIC MOFS_BUFFER_CACHE_ENABLE=1)
+else()
+    target_compile_definitions(${CORE_LIB_NAME} PUBLIC MOFS_BUFFER_CACHE_ENABLE=0)
+endif()

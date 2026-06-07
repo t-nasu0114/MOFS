@@ -3,11 +3,10 @@
 #include <setjmp.h>
 
 #include <cmocka.h>
-#include <errno.h>
 #include <mofs_core.h>
 #include <mofs_file.h>
 #include <mofs_posix.h>
-#include <mofs_user.h>
+#include <mofs_port_user.h>
 #include <unistd.h>
 
 #include "../fixtures/test_fixture.h"
@@ -29,12 +28,12 @@ static int setup_posix_misc_fixture(void **state)
         (void)mofs_test_remove_file(image_path);
         return -1;
     }
-    ret = mofs_set_caller_user((uid_t)0, (gid_t)0, getpid());
+    ret = mofs_set_caller_user((mofs_uid_t)0, (mofs_gid_t)0, getpid());
     if (ret != 0) {
         (void)mofs_test_remove_file(image_path);
         return -1;
     }
-    ret = mofs_init_core(image_path, false, 0U, 0U);
+    ret = mofs_init_core(image_path, MOFS_FALSE, 0U, 0U);
     if (ret != 0) {
         (void)mofs_clear_caller_user();
         (void)mofs_test_remove_file(image_path);
@@ -61,10 +60,10 @@ static void test_TC_P1_008_stat_root(void **state)
     int         ret   = 0;
 
     (void)state;
-    errno = 0;
+    mofs_errno = 0;
     ret   = mofs_stat("/", &stbuf);
     assert_int_equal(ret, 0);
-    assert_int_equal(errno, 0);
+    assert_int_equal(mofs_errno, 0);
     assert_int_not_equal((unsigned int)stbuf.st_mode & MOFS_FTYPE_DIR, 0U);
 }
 
@@ -75,10 +74,10 @@ static void test_TC_P1_009_stat_missing_path(void **state)
     int         ret   = 0;
 
     (void)state;
-    errno = 0;
+    mofs_errno = 0;
     ret   = mofs_stat("/no_such_file", &stbuf);
     assert_int_equal(ret, -1);
-    assert_int_equal(errno, ENOENT);
+    assert_int_equal(mofs_errno, MOFS_ENOENT);
 }
 
 int main(void)

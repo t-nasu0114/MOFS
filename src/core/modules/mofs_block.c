@@ -1,24 +1,27 @@
 
 #include "mofs_block.h"
+#include <mofs_buffer.h>
+#include <mofs_config.h>
 #include <mofs_core.h>
 #include <mofs_devio.h>
 #include <mofs_errno.h>
+#include <mofs_port_errno.h>
 #include <mofs_inode.h>
-#include <mofs_mem.h>
-#include <mofs_type.h>
+#include <mofs_port_mem.h>
+#include <mofs_types.h>
 
 /**
  * @brief Return the mounted volume logical block size in bytes.
  *
  * @return Logical block size from `ctx.sp_blk.blk_size`.
  */
-static size_t mofs_io_blk_sz(void)
+static mofs_size_t mofs_io_blk_sz(void)
 {
-    return (size_t)ctx.sp_blk.blk_size;
+    return (mofs_size_t)ctx.sp_blk.blk_size;
 }
 
-static int  set_data_bitmap_bit(unsigned int data_idx, bool set_used);
-static void update_data_bitmap_bits(const unsigned int *data_idx_list, unsigned int data_num, bool set_used);
+static int  set_data_bitmap_bit(unsigned int data_idx, mofs_bool set_used);
+static void update_data_bitmap_bits(const unsigned int *data_idx_list, unsigned int data_num, mofs_bool set_used);
 static int  find_free_data_block_indices(unsigned int *allocated_data_idx, unsigned int required_alloc_num,
                                          unsigned int *allocated_num);
 
@@ -36,11 +39,11 @@ static unsigned int list_ptrs_cap(void)
  * @brief Pointer to the data-block array inside a list-node buffer.
  *
  * @param[in] blk_buf Buffer of one logical block holding a list node.
- * @return Address of the first `uint32_t` file data pointer.
+ * @return Address of the first `mofs_uint32_t` file data pointer.
  */
-static uint32_t *list_ptr_area(unsigned char *blk_buf)
+static mofs_uint32_t *list_ptr_area(unsigned char *blk_buf)
 {
-    return (uint32_t *)(blk_buf + sizeof(mofs_data_list_hdr_t));
+    return (mofs_uint32_t *)(blk_buf + sizeof(mofs_data_list_hdr_t));
 }
 
 /**
@@ -79,7 +82,7 @@ static int abs_to_data_idx(unsigned int abs_blk, unsigned int *data_idx_out)
 static int read_list_node(unsigned int abs_blk, unsigned char *blk_buf)
 {
     unsigned int read_blk_num = 0U;
-    size_t       fraction     = 0U;
+    mofs_size_t       fraction     = 0U;
     int          ret;
 
     ret = read_continuous_blocks(ctx.dev_fd, blk_buf, 1U, abs_blk, &read_blk_num, &fraction);
@@ -104,7 +107,7 @@ static int read_list_node(unsigned int abs_blk, unsigned char *blk_buf)
 static int write_list_node(unsigned int abs_blk, unsigned char *blk_buf)
 {
     unsigned int written_blk_num = 0U;
-    size_t       fraction        = 0U;
+    mofs_size_t       fraction        = 0U;
     int          ret;
 
     ret = write_continuous_blocks(ctx.dev_fd, blk_buf, 1U, abs_blk, &written_blk_num, &fraction);
@@ -161,10 +164,14 @@ static int free_list_chain(unsigned int head_abs)
         if (ret != 0) {
             break;
         }
-        ret = set_data_bitmap_bit(data_idx, false);
+        ret = set_data_bitmap_bit(data_idx, MOFS_FALSE);
         if (ret != 0) {
             break;
         }
+
+        /* Drop any cached copy of the freed list-node block so a later
+         * reallocation of this absolute block reads fresh content. */
+        (void)mofs_bcache_invalidate(node_abs);
 
         node_abs = next_abs;
     }
@@ -322,9 +329,9 @@ static int rebuild_data_block_list(mofs_inode_t *inode, const unsigned int *abs_
     }
 
     for (unsigned int i = 0U; i < list_node_num; i++) {
-        ret = set_data_bitmap_bit(list_node_idx[i], true);
+        ret = set_data_bitmap_bit(list_node_idx[i], MOFS_TRUE);
         if (ret != 0) {
-            update_data_bitmap_bits(list_node_idx, i, false);
+            update_data_bitmap_bits(list_node_idx, i, MOFS_FALSE);
             goto out;
         }
     }
@@ -332,7 +339,7 @@ static int rebuild_data_block_list(mofs_inode_t *inode, const unsigned int *abs_
     blk_buf = (unsigned char *)mofs_malloc(mofs_io_blk_sz());
     if (blk_buf == NULL) {
         ret = get_errno();
-        update_data_bitmap_bits(list_node_idx, list_node_num, false);
+        update_data_bitmap_bits(list_node_idx, list_node_num, MOFS_FALSE);
         goto out;
     }
 
@@ -361,7 +368,7 @@ static int rebuild_data_block_list(mofs_inode_t *inode, const unsigned int *abs_
 
         ret = write_list_node(node_abs, blk_buf);
         if (ret != 0) {
-            update_data_bitmap_bits(list_node_idx, list_node_num, false);
+            update_data_bitmap_bits(list_node_idx, list_node_num, MOFS_FALSE);
             goto out;
         }
 
@@ -469,16 +476,16 @@ int resolve_file_data_block(int inode_num, unsigned int file_blk_idx, unsigned i
  * - Writes the bitmap block back to disk.
  *
  * @param[in] data_idx Data-region relative block index.
- * @param[in] set_used true to mark used, false to mark free.
+ * @param[in] set_used MOFS_TRUE to mark used, MOFS_FALSE to mark free.
  * @return 0 on success.
  * @return MOFS_EINVAL if `data_idx` is out of range.
  * @return MOFS_EIO if short read/write is detected on bitmap I/O.
  * @return Non-zero errno value propagated from block I/O.
  */
-static int set_data_bitmap_bit(unsigned int data_idx, bool set_used)
+static int set_data_bitmap_bit(unsigned int data_idx, mofs_bool set_used)
 {
     int            ret             = 0;
-    size_t const   blk_sz          = mofs_io_blk_sz();
+    mofs_size_t const   blk_sz          = mofs_io_blk_sz();
     unsigned int   bits_per_bitmap = (unsigned int)(blk_sz * 8U);
     unsigned int   target_blk      = data_idx / bits_per_bitmap;
     unsigned int   bit_in_blk      = data_idx % bits_per_bitmap;
@@ -487,7 +494,7 @@ static int set_data_bitmap_bit(unsigned int data_idx, bool set_used)
     unsigned char *bitmap_buf      = NULL;
     unsigned int   read_blk_num    = 0U;
     unsigned int   written_blk_num = 0U;
-    size_t         fraction        = 0U;
+    mofs_size_t         fraction        = 0U;
 
     if (data_idx >= ctx.sp_blk.data_blk_num) {
         return MOFS_EINVAL;
@@ -511,9 +518,9 @@ static int set_data_bitmap_bit(unsigned int data_idx, bool set_used)
 
     /* Toggle exactly one bit for the target data block. */
     if (set_used) {
-        bitmap_buf[target_byte] |= (uint8_t)(1U << target_bit);
+        bitmap_buf[target_byte] |= (mofs_uint8_t)(1U << target_bit);
     } else {
-        bitmap_buf[target_byte] &= (uint8_t)(~(1U << target_bit));
+        bitmap_buf[target_byte] &= (mofs_uint8_t)(~(1U << target_bit));
     }
 
     /* Persist bitmap block update. */
@@ -541,9 +548,9 @@ out:
  *
  * @param[in] data_idx_list Array of data-region relative block indices.
  * @param[in] data_num Number of elements in `data_idx_list`.
- * @param[in] set_used true to mark used, false to mark free.
+ * @param[in] set_used MOFS_TRUE to mark used, MOFS_FALSE to mark free.
  */
-static void update_data_bitmap_bits(const unsigned int *data_idx_list, unsigned int data_num, bool set_used)
+static void update_data_bitmap_bits(const unsigned int *data_idx_list, unsigned int data_num, mofs_bool set_used)
 {
     if (data_idx_list == NULL) {
         return;
@@ -588,7 +595,7 @@ static int find_free_data_block_indices(unsigned int *allocated_data_idx, unsign
 
     bitmap_blk_num = ctx.sp_blk.inode_table_start - ctx.sp_blk.data_bitmap_start;
 
-    size_t const       blk_sz          = mofs_io_blk_sz();
+    mofs_size_t const       blk_sz          = mofs_io_blk_sz();
     unsigned char     *bitmap_buf      = NULL;
     unsigned int const bits_per_bitmap = (unsigned int)(blk_sz * 8U);
 
@@ -600,7 +607,7 @@ static int find_free_data_block_indices(unsigned int *allocated_data_idx, unsign
     /* Scan each bitmap block until enough free blocks are found. */
     for (unsigned int blk_idx = 0U; (blk_idx < bitmap_blk_num) && (*allocated_num < required_alloc_num); blk_idx++) {
         unsigned int read_blk_num = 0U;
-        size_t       fraction     = 0U;
+        mofs_size_t       fraction     = 0U;
 
         ret = read_continuous_blocks(ctx.dev_fd, bitmap_buf, 1U, ctx.sp_blk.data_bitmap_start + blk_idx, &read_blk_num,
                                      &fraction);
@@ -702,9 +709,9 @@ int allocate_data_block(int inode_num, unsigned int req_blk_num)
     }
 
     for (unsigned int i = 0U; i < new_data_num; i++) {
-        ret = set_data_bitmap_bit(new_data_idx[i], true);
+        ret = set_data_bitmap_bit(new_data_idx[i], MOFS_TRUE);
         if (ret != 0) {
-            update_data_bitmap_bits(new_data_idx, i, false);
+            update_data_bitmap_bits(new_data_idx, i, MOFS_FALSE);
             goto out;
         }
         flat_abs[inode_buf.i_nr_blocks + i] = ctx.sp_blk.data_region_start + new_data_idx[i];
@@ -716,14 +723,14 @@ int allocate_data_block(int inode_num, unsigned int req_blk_num)
         /* Write new list nodes; old chain is kept until inode is persisted. */
         ret = rebuild_data_block_list(&inode_buf, flat_abs, new_total, &old_head);
         if (ret != 0) {
-            update_data_bitmap_bits(new_data_idx, new_data_num, false);
+            update_data_bitmap_bits(new_data_idx, new_data_num, MOFS_FALSE);
             goto out;
         }
 
         ret = mofs_write_inode(inode_num, &inode_buf);
         if (ret != 0) {
             (void)free_list_chain(inode_buf.i_data_head);
-            update_data_bitmap_bits(new_data_idx, new_data_num, false);
+            update_data_bitmap_bits(new_data_idx, new_data_num, MOFS_FALSE);
             inode_buf.i_data_head = old_head;
             inode_buf.i_nr_blocks -= req_blk_num;
             goto out;
@@ -814,11 +821,16 @@ int free_data_block(int inode_num, unsigned int start_blk_num, unsigned int req_
             mofs_free(flat_abs);
             return ret;
         }
-        ret = set_data_bitmap_bit(data_idx, false);
+        ret = set_data_bitmap_bit(data_idx, MOFS_FALSE);
         if (ret != 0) {
             mofs_free(flat_abs);
             return ret;
         }
+
+        /* Drop the cached copy as soon as the block is freed, before any
+         * reallocation (e.g. list-node rebuild below) can reuse this absolute
+         * block and write fresh contents to the cache. */
+        (void)mofs_bcache_invalidate(flat_abs[start_blk_num + i]);
     }
 
     saved_head = inode_buf.i_data_head;
@@ -869,7 +881,7 @@ rollback_bitmap:
     /* Restore data bitmap bits cleared before rebuild/write failed. */
     for (unsigned int i = 0U; i < free_blk_num; i++) {
         unsigned int data_idx = flat_abs[start_blk_num + i] - ctx.sp_blk.data_region_start;
-        (void)set_data_bitmap_bit(data_idx, true);
+        (void)set_data_bitmap_bit(data_idx, MOFS_TRUE);
     }
     mofs_free(flat_abs);
     mofs_free(compact_abs);
@@ -892,7 +904,7 @@ rollback_bitmap:
  */
 static int read_one_block(int fd, void *buf, int *err)
 {
-    size_t const nb = mofs_io_blk_sz();
+    mofs_size_t const nb = mofs_io_blk_sz();
     int          ret;
 
     if (nb == 0U) {
@@ -931,13 +943,13 @@ static int read_one_block(int fd, void *buf, int *err)
  * @return MOFS_EINVAL if arguments are invalid or offset is not block-aligned.
  * @return Non-zero errno value from `get_errno()` on read-related failures.
  */
-int read_continuous_blocks(int fd, void *buf, unsigned int req_blk_num, unsigned int start_blk_num,
-                           unsigned int *read_blk_num, size_t *fraction)
+int read_continuous_blocks_raw(int fd, void *buf, unsigned int req_blk_num, unsigned int start_blk_num,
+                               unsigned int *read_blk_num, mofs_size_t *fraction)
 {
     int          err       = 0;
     int          ret       = 0;
-    size_t const blk_bytes = mofs_io_blk_sz();
-    uint64_t     byte_off;
+    mofs_size_t const blk_bytes = mofs_io_blk_sz();
+    mofs_uint64_t     byte_off;
 
     if ((fd < 0) || (buf == NULL) || (read_blk_num == NULL) || (fraction == NULL)) {
         ret = MOFS_EINVAL;
@@ -949,14 +961,14 @@ int read_continuous_blocks(int fd, void *buf, unsigned int req_blk_num, unsigned
 
     /* Seek to start block */
     if (ret == 0) {
-        byte_off = (uint64_t)start_blk_num * (uint64_t)blk_bytes;
+        byte_off = (mofs_uint64_t)start_blk_num * (mofs_uint64_t)blk_bytes;
     }
 
     if (ret == 0) {
-        off_t offset = dev_lseek(fd, (off_t)byte_off, MOFS_SEEK_SET);
+        mofs_off_t offset = dev_lseek(fd, (mofs_off_t)byte_off, MOFS_SEEK_SET);
         if (offset < 0) {
             ret = get_errno();
-        } else if (((uint64_t)offset % (uint64_t)blk_bytes) != 0ULL) {
+        } else if (((mofs_uint64_t)offset % (mofs_uint64_t)blk_bytes) != 0ULL) {
             ret = MOFS_EINVAL;
         }
     }
@@ -970,8 +982,8 @@ int read_continuous_blocks(int fd, void *buf, unsigned int req_blk_num, unsigned
             if (ret == 0) {
                 ret = err;
                 break;
-            } else if ((size_t)ret != blk_bytes) {
-                *fraction = (size_t)ret;
+            } else if ((mofs_size_t)ret != blk_bytes) {
+                *fraction = (mofs_size_t)ret;
                 ret       = 0;
                 break;
             } else {
@@ -983,6 +995,33 @@ int read_continuous_blocks(int fd, void *buf, unsigned int req_blk_num, unsigned
     }
 
     return ret;
+}
+
+/**
+ * @brief Read multiple contiguous filesystem blocks (cache-aware entry point).
+ *
+ * Function behavior:
+ * - Routes through the block buffer cache when `MOFS_BUFFER_CACHE_ENABLE` is set.
+ * - Otherwise performs direct (raw) device reads.
+ *
+ * @param[in] fd Device file descriptor.
+ * @param[out] buf Destination buffer for contiguous blocks.
+ * @param[in] req_blk_num Number of blocks requested.
+ * @param[in] start_blk_num Starting block number.
+ * @param[out] read_blk_num Number of full blocks successfully read.
+ * @param[out] fraction Number of bytes for a short read in the last attempt.
+ * @return 0 on success (including short-read case; see `fraction`).
+ * @return MOFS_EINVAL if arguments are invalid or offset is not block-aligned.
+ * @return Non-zero errno value on read-related failures.
+ */
+int read_continuous_blocks(int fd, void *buf, unsigned int req_blk_num, unsigned int start_blk_num,
+                           unsigned int *read_blk_num, mofs_size_t *fraction)
+{
+#if MOFS_BUFFER_CACHE_ENABLE
+    return mofs_bcache_read_blocks(fd, buf, req_blk_num, start_blk_num, read_blk_num, fraction);
+#else
+    return read_continuous_blocks_raw(fd, buf, req_blk_num, start_blk_num, read_blk_num, fraction);
+#endif
 }
 
 /**
@@ -1001,7 +1040,7 @@ int read_continuous_blocks(int fd, void *buf, unsigned int req_blk_num, unsigned
  */
 static int write_one_block(int fd, const void *buf, int *err)
 {
-    size_t const nb = mofs_io_blk_sz();
+    mofs_size_t const nb = mofs_io_blk_sz();
     int          ret;
 
     if (nb == 0U) {
@@ -1040,13 +1079,13 @@ static int write_one_block(int fd, const void *buf, int *err)
  * @return MOFS_EINVAL if arguments are invalid or offset is not block-aligned.
  * @return Non-zero errno value from `get_errno()` on write-related failures.
  */
-int write_continuous_blocks(int fd, const void *buf, unsigned int req_blk_num, unsigned int start_blk_num,
-                            unsigned int *written_blk_num, size_t *fraction)
+int write_continuous_blocks_raw(int fd, const void *buf, unsigned int req_blk_num, unsigned int start_blk_num,
+                                unsigned int *written_blk_num, mofs_size_t *fraction)
 {
     int          err       = 0;
     int          ret       = 0;
-    size_t const blk_bytes = mofs_io_blk_sz();
-    uint64_t     byte_off;
+    mofs_size_t const blk_bytes = mofs_io_blk_sz();
+    mofs_uint64_t     byte_off;
 
     if ((fd < 0) || (buf == NULL) || (written_blk_num == NULL) || (fraction == NULL)) {
         ret = MOFS_EINVAL;
@@ -1058,11 +1097,11 @@ int write_continuous_blocks(int fd, const void *buf, unsigned int req_blk_num, u
 
     /* Align check */
     if (ret == 0) {
-        byte_off     = (uint64_t)start_blk_num * (uint64_t)blk_bytes;
-        off_t offset = dev_lseek(fd, (off_t)byte_off, MOFS_SEEK_SET);
+        byte_off     = (mofs_uint64_t)start_blk_num * (mofs_uint64_t)blk_bytes;
+        mofs_off_t offset = dev_lseek(fd, (mofs_off_t)byte_off, MOFS_SEEK_SET);
         if (offset < 0) {
             ret = get_errno();
-        } else if (((uint64_t)offset % (uint64_t)blk_bytes) != 0ULL) {
+        } else if (((mofs_uint64_t)offset % (mofs_uint64_t)blk_bytes) != 0ULL) {
             ret = MOFS_EINVAL;
         }
     }
@@ -1076,8 +1115,8 @@ int write_continuous_blocks(int fd, const void *buf, unsigned int req_blk_num, u
             if (ret == 0) {
                 ret = err;
                 break;
-            } else if ((size_t)ret != blk_bytes) {
-                *fraction = (size_t)ret;
+            } else if ((mofs_size_t)ret != blk_bytes) {
+                *fraction = (mofs_size_t)ret;
                 ret       = 0;
                 break;
             } else {
@@ -1089,4 +1128,31 @@ int write_continuous_blocks(int fd, const void *buf, unsigned int req_blk_num, u
     }
 
     return ret;
+}
+
+/**
+ * @brief Write multiple contiguous filesystem blocks (cache-aware entry point).
+ *
+ * Function behavior:
+ * - Routes through the block buffer cache when `MOFS_BUFFER_CACHE_ENABLE` is set.
+ * - Otherwise performs direct (raw) device writes.
+ *
+ * @param[in] fd Device file descriptor.
+ * @param[in] buf Source buffer containing contiguous blocks.
+ * @param[in] req_blk_num Number of blocks requested to write.
+ * @param[in] start_blk_num Starting block number.
+ * @param[out] written_blk_num Number of full blocks successfully written.
+ * @param[out] fraction Number of bytes for a short write in the last attempt.
+ * @return 0 on success (including short-write case; see `fraction`).
+ * @return MOFS_EINVAL if arguments are invalid or offset is not block-aligned.
+ * @return Non-zero errno value on write-related failures.
+ */
+int write_continuous_blocks(int fd, const void *buf, unsigned int req_blk_num, unsigned int start_blk_num,
+                            unsigned int *written_blk_num, mofs_size_t *fraction)
+{
+#if MOFS_BUFFER_CACHE_ENABLE
+    return mofs_bcache_write_blocks(fd, buf, req_blk_num, start_blk_num, written_blk_num, fraction);
+#else
+    return write_continuous_blocks_raw(fd, buf, req_blk_num, start_blk_num, written_blk_num, fraction);
+#endif
 }

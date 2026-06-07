@@ -22,7 +22,9 @@ project_root/
 │  ├─ core/              # 本体ロジック
 │  │  ├─ include/        # core内部ヘッダ
 │  │  └─ modules/        # 機能別実装
-│  ├─ api/               # POSIX API 用 wrapper
+│  ├─ port/              # 移植契約 (HAL)
+│  │  └─ include/        # core/posix が OS に要求する API（型実体は mofs_port_types.h）
+│  ├─ posix/             # POSIX API 層
 │  ├─ os/
 │  │  ├─ linux/
 │  │  └─ zephyr/
@@ -73,7 +75,7 @@ MOFS のディレクトリ構成は以下の原則を守る。
 
 #### 2.2.8. 依存方向を一定にする
 
-上位層 → POSIX API層 → core → OS abstraction の向きに依存を流し、逆流させないことです。
+上位層 → POSIX API層 → core → port（移植契約）→ os/<platform> の向きに依存を流し、逆流させないことです。
 どこからでも何でも呼べる構造にしない。
 
 ## 3. include ファイル
@@ -85,21 +87,26 @@ include ファイルの基本構成は以下の通り。
 ```
 project_root/
 ├─ include/                  # 外部公開ヘッダ。ファイルシステムを使用するユーザーが使用できるもの。
-│  ├─ product_api.h
-│  ├─ product_types.h
-│  └─ product_errors.h
+│  ├─ mofs_types.h           # 公開型エントリ（中身は mofs_port_types.h を include）
+│  ├─ mofs_errno.h            # MOFS_E* 定数
+│  └─ mofs_posix.h 等
 │
 ├─ src/
 │  ├─ core/
-│  │  ├─ include/            # core内部ヘッダ。内部の他モジュールが core の機能を使用するときに参照する。
-│  │  │  ├─ product_core.h
-│  │  │  ├─ product_nodes.h
-│  │  │  └─ product_internal.h
-│  │  └─ ...
+│  │  ├─ include/            # core内部ヘッダ。core モジュール間の共有 API。
+│  │  └─ modules/
+│  │
+│  ├─ port/
+│  │  └─ include/             # 移植契約 (HAL)。core/posix が OS 実装に要求する API。
+│  │     ├─ mofs_port_types.h
+│  │     ├─ mofs_devio.h
+│  │     ├─ mofs_port_errno.h
+│  │     ├─ mofs_port_mem.h
+│  │     └─ ...
 │  │
 │  ├─ os/
-│  │  ├─ linux/include/      # Linux依存の情報をインクルードできるヘッダ
-│  │  └─ zephyr/include/     # zephyr依存の情報をインクルードできるヘッダ
+│  │  ├─ linux/service/       # port 契約の Linux 実装 (.c)
+│  │  └─ zephyr/service/
 │  │
 │  └─ tools/config/include/  # ツール専用ヘッダ
 │     └─ version.h
@@ -113,14 +120,25 @@ project_root/
   - 安定性が必要
 
 - `core/include/`
-  - 実装内部の共有ヘッダ
-  - core の `.c/.cpp` 同士で利用
+  - core モジュール間の内部共有ヘッダ（`mofs_inode.h` 等）
+  - core の `.c` 同士で利用
   - 外部非公開前提
 
-- `os/<platform>/include/`
-  - platform 差分の吸収
-  - platform ごとに排他的
-  - 他 platform からは見えないのが理想
+- `port/include/`
+- 移植契約 (HAL)。core / posix が OS 実装に要求する API
+- `mofs_port_types.h` … 型契約の入口（`mofs_os_types.h` を include）。実体は各 `os/<platform>/include/mofs_os_types.h` に置く
+- `dev_*`, `get_errno`, `mofs_malloc`, `mofs_now` 等
+  - CMake の `mofs_port` INTERFACE ライブラリ経由で core / posix / os_service に渡す
+  - 外部利用者には `-I` しない
+
+- `os/<platform>/service/`
+  - port 契約のプラットフォーム実装（`.c`）
+  - POSIX/C 標準ヘッダは `.c` 内のみ使用可
+
+- `os/<platform>/include/`（任意）
+  - プラットフォーム固有の実装詳細ヘッダ（`mofs_os_types.h` 等）
+  - `os_service` の PUBLIC include 経由で core に伝播
+  - core から直接参照しない
 
 - `projects/<variant>/`
   - 製品差分・設定差分
@@ -137,10 +155,11 @@ include ファイル構成の原則は以下の通り。
 
 ### 3.3.1. `include` は 1 種類ではなく、公開範囲ごとに分ける
 
-典型的には次の 3 層。
-- 公開ヘッダ: 外部利用者向け
-- 内部ヘッダ: 同一コンポーネント実装向け
-- 環境依存ヘッダ: OS/Platform 向け
+典型的には次の 4 層。
+- 公開ヘッダ: 外部利用者向け（`include/`）
+- core 内部ヘッダ: core モジュール間向け（`core/include/`）
+- 移植契約 (HAL): OS 抽象 API（`port/include/`）
+- プラットフォーム実装: OS ごとの `.c`（`os/<platform>/service/`）
 
 ### 3.3.2. ヘッダのスコープは「置き場所」だけでなく「include path」で決まる
 
@@ -189,7 +208,8 @@ project_root/
 │  │  ├─ include/
 │  │  └─ modules/
 │  ├─ posix/             # NG
-│  └─ os/                # OK
+│  ├─ port/              # OK（契約ヘッダ。C 標準ヘッダは置かない）
+│  └─ os/                # OK（`mofs_os_types.h` 等の実体）
 │      ├─ linux/
 │      └─ zephyr/
 ├─ tests/                # OK
@@ -201,11 +221,14 @@ project_root/
 
 include path は「必要最小限」にする。
 
-- 本体 core ターゲット
+- 本体 core / posix ターゲット
   - `include/`
-  - `core/include/`
-  - `os/<selected>/include/`
-  - `projects/<selected>/`
+  - `core/include/`（core のみ）
+  - `port/include/`（`mofs_port` link 経由）
+
+- os_service ターゲット
+  - `port/include/`（`mofs_port` link 経由）
+  - `os/<selected>/include/`（PUBLIC。`mofs_os_types.h` の実体）
 
 - 外部利用者
   - `include/` のみ

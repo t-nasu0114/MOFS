@@ -3,7 +3,6 @@
 #include <setjmp.h>
 
 #include <cmocka.h>
-#include <errno.h>
 #include <mofs_core.h>
 #include <mofs_errno.h>
 #include <mofs_file.h>
@@ -26,7 +25,7 @@ static void test_TC_P1_001_init_core_success(void **state)
     ret = mofs_format(image_path, 0, MOFS_BLK_SIZE);
     assert_int_equal(ret, 0);
 
-    ret = mofs_init_core(image_path, false, 0U, 0U);
+    ret = mofs_init_core(image_path, MOFS_FALSE, 0U, 0U);
     assert_int_equal(ret, 0);
 
     assert_int_equal(mofs_fini_core(), 0);
@@ -39,7 +38,7 @@ static void test_TC_P1_002_init_core_missing_device(void **state)
     int ret = 0;
 
     (void)state;
-    ret = mofs_init_core("/tmp/path_that_should_not_exist_mofs", false, 0U, 0U);
+    ret = mofs_init_core("/tmp/path_that_should_not_exist_mofs", MOFS_FALSE, 0U, 0U);
     assert_true(ret != 0);
 }
 
@@ -53,7 +52,7 @@ static void test_TC_P1_003_init_core_magic_mismatch(void **state)
     ret = mofs_test_create_temp_image(image_path, sizeof(image_path), 2U * 1024U * 1024U);
     assert_int_equal(ret, 0);
 
-    ret = mofs_init_core(image_path, false, 0U, 0U);
+    ret = mofs_init_core(image_path, MOFS_FALSE, 0U, 0U);
     assert_int_equal(ret, MOFS_EIO);
     assert_int_equal(mofs_test_remove_file(image_path), 0);
 }
@@ -70,7 +69,7 @@ static void test_TC_P1_004_fini_core_returns_zero(void **state)
     ret = mofs_format(image_path, 0, MOFS_BLK_SIZE);
     assert_int_equal(ret, 0);
 
-    ret = mofs_init_core(image_path, false, 0U, 0U);
+    ret = mofs_init_core(image_path, MOFS_FALSE, 0U, 0U);
     assert_int_equal(ret, 0);
 
     ret = mofs_fini_core();
@@ -91,13 +90,13 @@ static void test_TC_P1_005_stat_success(void **state)
     ret = mofs_format(image_path, 0, MOFS_BLK_SIZE);
     assert_int_equal(ret, 0);
 
-    ret = mofs_init_core(image_path, false, 0U, 0U);
+    ret = mofs_init_core(image_path, MOFS_FALSE, 0U, 0U);
     assert_int_equal(ret, 0);
 
-    errno = 0;
-    ret   = mofs_stat("/", &stbuf);
+    mofs_errno = 0;
+    ret        = mofs_stat("/", &stbuf);
     assert_int_equal(ret, 0);
-    assert_int_equal(errno, 0);
+    assert_int_equal(mofs_errno, 0);
     assert_int_equal((int)stbuf.st_ino, 2);
     assert_true((stbuf.st_mode & MOFS_FTYPE_DIR) != 0U);
 
@@ -112,10 +111,10 @@ static void test_TC_P1_006_stat_null_path(void **state)
     mofs_stat_t stbuf = {0};
 
     (void)state;
-    errno = 0;
-    ret   = mofs_stat(NULL, &stbuf);
+    mofs_errno = 0;
+    ret        = mofs_stat(NULL, &stbuf);
     assert_int_equal(ret, -1);
-    assert_int_equal(errno, EINVAL);
+    assert_int_equal(mofs_errno, MOFS_EINVAL);
 }
 
 /* TC-P1-007: mofs_stat rejects NULL output buffer. */
@@ -124,10 +123,10 @@ static void test_TC_P1_007_stat_null_stbuf(void **state)
     int ret = 0;
 
     (void)state;
-    errno = 0;
-    ret   = mofs_stat("/", NULL);
+    mofs_errno = 0;
+    ret        = mofs_stat("/", NULL);
     assert_int_equal(ret, -1);
-    assert_int_equal(errno, EINVAL);
+    assert_int_equal(mofs_errno, MOFS_EINVAL);
 }
 
 int main(void)

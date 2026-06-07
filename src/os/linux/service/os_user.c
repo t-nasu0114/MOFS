@@ -1,19 +1,20 @@
 #define _GNU_SOURCE
 #include <mofs_errno.h>
-#include <mofs_mem.h>
-#include <mofs_user.h>
+#include <mofs_port_errno.h>
+#include <mofs_port_mem.h>
+#include <mofs_port_user.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
 static __thread mofs_user_ctx_t caller_user_ctx = {
-    .uid             = 0,
-    .gid             = 0,
-    .pid             = 0,
-    .supp_groups     = {0},
+    .uid              = 0,
+    .gid              = 0,
+    .pid              = 0,
+    .supp_groups      = {0},
     .supp_group_count = 0,
-    .valid           = false,
+    .valid            = MOFS_FALSE,
 };
 
 static int read_supp_groups_from_os(mofs_user_ctx_t *user)
@@ -31,7 +32,7 @@ static int read_supp_groups_from_os(mofs_user_ctx_t *user)
         return 0;
     }
 
-    groups = (gid_t *)mofs_malloc(sizeof(gid_t) * (size_t)group_count);
+    groups = (gid_t *)mofs_malloc(sizeof(gid_t) * (mofs_size_t)group_count);
     if (groups == NULL) {
         return MOFS_ENOMEM;
     }
@@ -42,37 +43,37 @@ static int read_supp_groups_from_os(mofs_user_ctx_t *user)
         return get_errno();
     }
 
-    user->supp_group_count = (size_t)group_count;
+    user->supp_group_count = (mofs_size_t)group_count;
     if (user->supp_group_count > MOFS_SUPP_GROUP_MAX) {
         user->supp_group_count = MOFS_SUPP_GROUP_MAX;
     }
 
-    for (size_t i = 0; i < user->supp_group_count; i++) {
-        user->supp_groups[i] = groups[i];
+    for (mofs_size_t i = 0; i < user->supp_group_count; i++) {
+        user->supp_groups[i] = (mofs_gid_t)groups[i];
     }
     mofs_free(groups);
     return 0;
 }
 
-int mofs_set_caller_user(uid_t uid, gid_t gid, pid_t pid)
+int mofs_set_caller_user(mofs_uid_t uid, mofs_gid_t gid, mofs_pid_t pid)
 {
-    caller_user_ctx.uid   = uid;
-    caller_user_ctx.gid   = gid;
-    caller_user_ctx.pid   = pid;
-    caller_user_ctx.supp_groups[0]  = gid;
-    caller_user_ctx.supp_group_count = 1;
-    caller_user_ctx.valid = true;
+    caller_user_ctx.uid                = uid;
+    caller_user_ctx.gid                = gid;
+    caller_user_ctx.pid                = pid;
+    caller_user_ctx.supp_groups[0]     = gid;
+    caller_user_ctx.supp_group_count   = 1;
+    caller_user_ctx.valid              = MOFS_TRUE;
 
     return 0;
 }
 
 #if defined(__linux__)
-static int parse_proc_status_groups(pid_t pid, gid_t *out, size_t max_out, size_t *out_count)
+static int parse_proc_status_groups(mofs_pid_t pid, mofs_gid_t *out, mofs_size_t max_out, mofs_size_t *out_count)
 {
     char    path[64];
     FILE   *fp    = NULL;
     char   *line  = NULL;
-    size_t cap    = 0;
+    size_t  cap   = 0;
     ssize_t nread;
 
     if ((pid <= 0) || (out == NULL) || (out_count == NULL)) {
@@ -87,9 +88,9 @@ static int parse_proc_status_groups(pid_t pid, gid_t *out, size_t max_out, size_
     }
 
     while ((nread = getline(&line, &cap, fp)) != -1) {
-        char *p = NULL;
+        char *p       = NULL;
         char *saveptr = NULL;
-        char *tok = NULL;
+        char *tok     = NULL;
 
         if (strncmp(line, "Groups:", 7) != 0) {
             continue;
@@ -104,7 +105,7 @@ static int parse_proc_status_groups(pid_t pid, gid_t *out, size_t max_out, size_
         for (tok = strtok_r(p, " \t\n", &saveptr); tok != NULL; tok = strtok_r(NULL, " \t\n", &saveptr)) {
             unsigned long v = strtoul(tok, NULL, 10);
             if (*out_count < max_out) {
-                out[*out_count] = (gid_t)v;
+                out[*out_count] = (mofs_gid_t)v;
                 (*out_count)++;
             }
         }
@@ -117,11 +118,11 @@ static int parse_proc_status_groups(pid_t pid, gid_t *out, size_t max_out, size_
 }
 #endif /* defined(__linux__) */
 
-int mofs_set_caller_for_peer_process(uid_t uid, gid_t gid, pid_t pid)
+int mofs_set_caller_for_peer_process(mofs_uid_t uid, mofs_gid_t gid, mofs_pid_t pid)
 {
-    int   ret;
-    gid_t groups[MOFS_SUPP_GROUP_MAX];
-    size_t n = 0;
+    int          ret;
+    mofs_gid_t   groups[MOFS_SUPP_GROUP_MAX];
+    mofs_size_t  n = 0;
 
     ret = mofs_set_caller_user(uid, gid, pid);
     if (ret != 0) {
@@ -136,7 +137,7 @@ int mofs_set_caller_for_peer_process(uid_t uid, gid_t gid, pid_t pid)
     return 0;
 }
 
-int mofs_set_caller_supp_groups(const gid_t *groups, size_t group_count)
+int mofs_set_caller_supp_groups(const mofs_gid_t *groups, mofs_size_t group_count)
 {
     if ((group_count > 0U) && (groups == NULL)) {
         return MOFS_EINVAL;
@@ -147,12 +148,12 @@ int mofs_set_caller_supp_groups(const gid_t *groups, size_t group_count)
         caller_user_ctx.supp_group_count = MOFS_SUPP_GROUP_MAX;
     }
 
-    for (size_t i = 0; i < caller_user_ctx.supp_group_count; i++) {
+    for (mofs_size_t i = 0; i < caller_user_ctx.supp_group_count; i++) {
         caller_user_ctx.supp_groups[i] = groups[i];
     }
 
     if (caller_user_ctx.supp_group_count == 0U) {
-        caller_user_ctx.supp_groups[0]  = caller_user_ctx.gid;
+        caller_user_ctx.supp_groups[0]   = caller_user_ctx.gid;
         caller_user_ctx.supp_group_count = 1U;
     }
 
@@ -170,14 +171,14 @@ int mofs_get_caller_user(mofs_user_ctx_t *user)
         return 0;
     }
 
-    user->uid   = geteuid();
-    user->gid   = getegid();
-    user->pid   = getpid();
-    user->valid = true;
+    user->uid   = (mofs_uid_t)geteuid();
+    user->gid   = (mofs_gid_t)getegid();
+    user->pid   = (mofs_pid_t)getpid();
+    user->valid = MOFS_TRUE;
     return read_supp_groups_from_os(user);
 }
 
-int mofs_is_caller_in_group(gid_t group_id, bool *is_member)
+int mofs_is_caller_in_group(mofs_gid_t group_id, mofs_bool *is_member)
 {
     int             ret = 0;
     mofs_user_ctx_t user;
@@ -186,20 +187,20 @@ int mofs_is_caller_in_group(gid_t group_id, bool *is_member)
         return MOFS_EINVAL;
     }
 
-    *is_member = false;
+    *is_member = MOFS_FALSE;
     ret        = mofs_get_caller_user(&user);
     if (ret != 0) {
         return ret;
     }
 
     if (user.gid == group_id) {
-        *is_member = true;
+        *is_member = MOFS_TRUE;
         return 0;
     }
 
-    for (size_t i = 0; i < user.supp_group_count; i++) {
+    for (mofs_size_t i = 0; i < user.supp_group_count; i++) {
         if (user.supp_groups[i] == group_id) {
-            *is_member = true;
+            *is_member = MOFS_TRUE;
             break;
         }
     }
@@ -213,6 +214,6 @@ int mofs_clear_caller_user(void)
     caller_user_ctx.pid              = 0;
     caller_user_ctx.supp_groups[0]   = 0;
     caller_user_ctx.supp_group_count = 0;
-    caller_user_ctx.valid            = false;
+    caller_user_ctx.valid            = MOFS_FALSE;
     return 0;
 }

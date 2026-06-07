@@ -1,5 +1,6 @@
 #include <mofs_errno.h>
-#include <mofs_time.h>
+#include <mofs_port_errno.h>
+#include <mofs_port_time.h>
 #include <time.h>
 
 /**

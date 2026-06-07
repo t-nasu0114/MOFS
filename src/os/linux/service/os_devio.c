@@ -8,6 +8,7 @@
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 int dev_open(const char *path, int oflag)
 {
@@ -48,14 +49,19 @@ int dev_open(const char *path, int oflag)
     return ret;
 }
 
-int dev_write(int fd, const void *buf, size_t count)
+int dev_write(int fd, const void *buf, mofs_size_t count)
 {
-    return write(fd, buf, count);
+    return (int)write(fd, buf, (size_t)count);
 }
 
-int dev_read(int fd, void *buf, size_t count)
+int dev_read(int fd, void *buf, mofs_size_t count)
 {
-    return read(fd, buf, count);
+    return (int)read(fd, buf, (size_t)count);
+}
+
+int dev_fsync(int fd)
+{
+    return fsync(fd);
 }
 
 void dev_close(int fd)
@@ -63,9 +69,9 @@ void dev_close(int fd)
     close(fd);
 }
 
-off_t dev_lseek(int fd, off_t offset, int whence)
+mofs_off_t dev_lseek(int fd, mofs_off_t offset, int whence)
 {
-    return lseek(fd, offset, whence);
+    return (mofs_off_t)lseek(fd, (off_t)offset, whence);
 }
 
 unsigned long long dev_get_size(int fd, int *err)
@@ -86,7 +92,7 @@ unsigned long long dev_get_size(int fd, int *err)
                 sta   = errno;
             }
         } else if (S_ISREG(st.st_mode)) {
-            bytes = st.st_size;
+            bytes = (unsigned long long)st.st_size;
         } else {
             sta = EINVAL;
         }

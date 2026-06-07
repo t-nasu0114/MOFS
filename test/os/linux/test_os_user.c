@@ -4,8 +4,8 @@
 
 #include <cmocka.h>
 #include <mofs_errno.h>
-#include <mofs_type.h>
-#include <mofs_user.h>
+#include <mofs_types.h>
+#include <mofs_port_user.h>
 
 /* TC-P2-009: set/get caller user preserves uid/gid/pid values. */
 static void test_TC_P2_009_set_and_get_caller_user(void **state)
@@ -14,7 +14,7 @@ static void test_TC_P2_009_set_and_get_caller_user(void **state)
     int             ret = 0;
 
     (void)state;
-    ret = mofs_set_caller_user((uid_t)1001, (gid_t)1002, (pid_t)1003);
+    ret = mofs_set_caller_user((mofs_uid_t)1001, (mofs_gid_t)1002, (mofs_pid_t)1003);
     assert_int_equal(ret, 0);
 
     ret = mofs_get_caller_user(&user);
@@ -38,29 +38,29 @@ static void test_TC_P2_010_set_supp_groups_with_null_group_ptr(void **state)
 /* TC-P2-011: caller is recognized as member of its primary group. */
 static void test_TC_P2_011_is_caller_in_group_primary_group(void **state)
 {
-    bool is_member = false;
+    mofs_bool is_member = MOFS_FALSE;
     int  ret       = 0;
 
     (void)state;
-    ret = mofs_set_caller_user((uid_t)2001, (gid_t)2002, (pid_t)2003);
+    ret = mofs_set_caller_user((mofs_uid_t)2001, (mofs_gid_t)2002, (mofs_pid_t)2003);
     assert_int_equal(ret, 0);
 
-    ret = mofs_is_caller_in_group((gid_t)2002, &is_member);
+    ret = mofs_is_caller_in_group((mofs_gid_t)2002, &is_member);
     assert_int_equal(ret, 0);
     assert_true(is_member);
 }
 
-/* TC-P2-012: non-member group query returns false with success status. */
+/* TC-P2-012: non-member group query returns MOFS_FALSE with success status. */
 static void test_TC_P2_012_is_caller_in_group_not_member(void **state)
 {
-    bool is_member = true;
+    mofs_bool is_member = MOFS_TRUE;
     int  ret       = 0;
 
     (void)state;
-    ret = mofs_set_caller_user((uid_t)3001, (gid_t)3002, (pid_t)3003);
+    ret = mofs_set_caller_user((mofs_uid_t)3001, (mofs_gid_t)3002, (mofs_pid_t)3003);
     assert_int_equal(ret, 0);
 
-    ret = mofs_is_caller_in_group((gid_t)3999, &is_member);
+    ret = mofs_is_caller_in_group((mofs_gid_t)3999, &is_member);
     assert_int_equal(ret, 0);
     assert_false(is_member);
 }
