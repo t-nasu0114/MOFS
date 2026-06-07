@@ -1,5 +1,7 @@
 
 #include "mofs_block.h"
+#include <mofs_buffer.h>
+#include <mofs_config.h>
 #include <mofs_core.h>
 #include <mofs_devio.h>
 #include <mofs_errno.h>
@@ -166,6 +168,10 @@ static int free_list_chain(unsigned int head_abs)
         if (ret != 0) {
             break;
         }
+
+        /* Drop any cached copy of the freed list-node block so a later
+         * reallocation of this absolute block reads fresh content. */
+        (void)mofs_bcache_invalidate(node_abs);
 
         node_abs = next_abs;
     }
@@ -820,6 +826,11 @@ int free_data_block(int inode_num, unsigned int start_blk_num, unsigned int req_
             mofs_free(flat_abs);
             return ret;
         }
+
+        /* Drop the cached copy as soon as the block is freed, before any
+         * reallocation (e.g. list-node rebuild below) can reuse this absolute
+         * block and write fresh contents to the cache. */
+        (void)mofs_bcache_invalidate(flat_abs[start_blk_num + i]);
     }
 
     saved_head = inode_buf.i_data_head;
@@ -932,8 +943,8 @@ static int read_one_block(int fd, void *buf, int *err)
  * @return MOFS_EINVAL if arguments are invalid or offset is not block-aligned.
  * @return Non-zero errno value from `get_errno()` on read-related failures.
  */
-int read_continuous_blocks(int fd, void *buf, unsigned int req_blk_num, unsigned int start_blk_num,
-                           unsigned int *read_blk_num, mofs_size_t *fraction)
+int read_continuous_blocks_raw(int fd, void *buf, unsigned int req_blk_num, unsigned int start_blk_num,
+                               unsigned int *read_blk_num, mofs_size_t *fraction)
 {
     int          err       = 0;
     int          ret       = 0;
@@ -984,6 +995,33 @@ int read_continuous_blocks(int fd, void *buf, unsigned int req_blk_num, unsigned
     }
 
     return ret;
+}
+
+/**
+ * @brief Read multiple contiguous filesystem blocks (cache-aware entry point).
+ *
+ * Function behavior:
+ * - Routes through the block buffer cache when `MOFS_BUFFER_CACHE_ENABLE` is set.
+ * - Otherwise performs direct (raw) device reads.
+ *
+ * @param[in] fd Device file descriptor.
+ * @param[out] buf Destination buffer for contiguous blocks.
+ * @param[in] req_blk_num Number of blocks requested.
+ * @param[in] start_blk_num Starting block number.
+ * @param[out] read_blk_num Number of full blocks successfully read.
+ * @param[out] fraction Number of bytes for a short read in the last attempt.
+ * @return 0 on success (including short-read case; see `fraction`).
+ * @return MOFS_EINVAL if arguments are invalid or offset is not block-aligned.
+ * @return Non-zero errno value on read-related failures.
+ */
+int read_continuous_blocks(int fd, void *buf, unsigned int req_blk_num, unsigned int start_blk_num,
+                           unsigned int *read_blk_num, mofs_size_t *fraction)
+{
+#if MOFS_BUFFER_CACHE_ENABLE
+    return mofs_bcache_read_blocks(fd, buf, req_blk_num, start_blk_num, read_blk_num, fraction);
+#else
+    return read_continuous_blocks_raw(fd, buf, req_blk_num, start_blk_num, read_blk_num, fraction);
+#endif
 }
 
 /**
@@ -1041,8 +1079,8 @@ static int write_one_block(int fd, const void *buf, int *err)
  * @return MOFS_EINVAL if arguments are invalid or offset is not block-aligned.
  * @return Non-zero errno value from `get_errno()` on write-related failures.
  */
-int write_continuous_blocks(int fd, const void *buf, unsigned int req_blk_num, unsigned int start_blk_num,
-                            unsigned int *written_blk_num, mofs_size_t *fraction)
+int write_continuous_blocks_raw(int fd, const void *buf, unsigned int req_blk_num, unsigned int start_blk_num,
+                                unsigned int *written_blk_num, mofs_size_t *fraction)
 {
     int          err       = 0;
     int          ret       = 0;
@@ -1090,4 +1128,31 @@ int write_continuous_blocks(int fd, const void *buf, unsigned int req_blk_num, u
     }
 
     return ret;
+}
+
+/**
+ * @brief Write multiple contiguous filesystem blocks (cache-aware entry point).
+ *
+ * Function behavior:
+ * - Routes through the block buffer cache when `MOFS_BUFFER_CACHE_ENABLE` is set.
+ * - Otherwise performs direct (raw) device writes.
+ *
+ * @param[in] fd Device file descriptor.
+ * @param[in] buf Source buffer containing contiguous blocks.
+ * @param[in] req_blk_num Number of blocks requested to write.
+ * @param[in] start_blk_num Starting block number.
+ * @param[out] written_blk_num Number of full blocks successfully written.
+ * @param[out] fraction Number of bytes for a short write in the last attempt.
+ * @return 0 on success (including short-write case; see `fraction`).
+ * @return MOFS_EINVAL if arguments are invalid or offset is not block-aligned.
+ * @return Non-zero errno value on write-related failures.
+ */
+int write_continuous_blocks(int fd, const void *buf, unsigned int req_blk_num, unsigned int start_blk_num,
+                            unsigned int *written_blk_num, mofs_size_t *fraction)
+{
+#if MOFS_BUFFER_CACHE_ENABLE
+    return mofs_bcache_write_blocks(fd, buf, req_blk_num, start_blk_num, written_blk_num, fraction);
+#else
+    return write_continuous_blocks_raw(fd, buf, req_blk_num, start_blk_num, written_blk_num, fraction);
+#endif
 }

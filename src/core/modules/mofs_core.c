@@ -1,4 +1,6 @@
 
+#include <mofs_buffer.h>
+#include <mofs_config.h>
 #include <mofs_core.h>
 #include <mofs_devio.h>
 #include <mofs_dir.h>
@@ -53,7 +55,13 @@ int mofs_init_core(const char *path, mofs_bool update_root_owner, mofs_uint32_t 
 
     mofs_strcpy(ctx.dev_path, path);
 
+#if MOFS_BUFFER_CACHE_ENABLE
+    /* Write-back cache provides durability via explicit flush + dev_fsync,
+     * so the synchronous open flag is dropped to let the cache batch I/O. */
+    ctx.dev_fd = dev_open(path, MOFS_IO_OPEN_FLAG_RDWR);
+#else
     ctx.dev_fd = dev_open(path, MOFS_IO_OPEN_FLAG_RDWR | MOFS_IO_OPEN_FLAG_SYNC);
+#endif
     if (ctx.dev_fd < 0) {
         ret = get_errno();
         goto out2;
@@ -110,6 +118,14 @@ int mofs_init_core(const char *path, mofs_bool update_root_owner, mofs_uint32_t 
         filehandle_pool[i].used = MOFS_FALSE;
     }
 
+#if MOFS_BUFFER_CACHE_ENABLE
+    /* Initialize block buffer cache (requires ctx.sp_blk.blk_size). */
+    ret = mofs_bcache_init();
+    if (ret != 0) {
+        goto out3;
+    }
+#endif
+
     /* Mark as initalized */
     ctx.init = MOFS_TRUE;
 
@@ -133,6 +149,9 @@ int mofs_init_core(const char *path, mofs_bool update_root_owner, mofs_uint32_t 
     return 0;
 
 out3:
+#if MOFS_BUFFER_CACHE_ENABLE
+    mofs_bcache_fini();
+#endif
     dev_close(ctx.dev_fd);
 out2:
     mofs_free(ctx.dev_path);
@@ -157,6 +176,13 @@ out1:
  */
 int mofs_fini_core(void)
 {
+#if MOFS_BUFFER_CACHE_ENABLE
+    /* Persist dirty cache contents before tearing down the device. */
+    if (mofs_bcache_flush() != 0) {
+        mofs_log_err("buffer cache flush failed on unmount");
+    }
+    mofs_bcache_fini();
+#endif
     dev_close(ctx.dev_fd);
     mofs_free(ctx.dev_path);
     ctx.dev_path = NULL;

@@ -14,6 +14,7 @@
 int  dev_open(const char *path, int oflag);
 int  dev_write(int fd, const void *buf, mofs_size_t count);
 int  dev_read(int fd, void *buf, mofs_size_t count);
+int  dev_fsync(int fd);
 void dev_close(int fd);
 
 /* Original whence Flags */

@@ -59,6 +59,11 @@ int dev_read(int fd, void *buf, mofs_size_t count)
     return (int)read(fd, buf, (size_t)count);
 }
 
+int dev_fsync(int fd)
+{
+    return fsync(fd);
+}
+
 void dev_close(int fd)
 {
     close(fd);

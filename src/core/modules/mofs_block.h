@@ -11,4 +11,10 @@ int read_continuous_blocks(int fd, void *buf, unsigned int req_blk_num, unsigned
 int write_continuous_blocks(int fd, const void *buf, unsigned int req_blk_num, unsigned int start_blk_num,
                             unsigned int *written_blk_num, mofs_size_t *fraction);
 
+/* Cache-bypassing raw block I/O (used by the buffer cache on miss/flush). */
+int read_continuous_blocks_raw(int fd, void *buf, unsigned int req_blk_num, unsigned int start_blk_num,
+                               unsigned int *read_blk_num, mofs_size_t *fraction);
+int write_continuous_blocks_raw(int fd, const void *buf, unsigned int req_blk_num, unsigned int start_blk_num,
+                                unsigned int *written_blk_num, mofs_size_t *fraction);
+
 #endif /* __MOFS_BLOCK__ */
