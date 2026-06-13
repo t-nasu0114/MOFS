@@ -10,6 +10,7 @@
 #include <mofs_port_errno.h>
 #include <mofs_lifecycle.h>
 #include <mofs_posix.h>
+#include <mofs_port_sync.h>
 #include <mofs_port_user.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -494,9 +495,12 @@ int mofs_readdir_fuse(const char *path, void *buf, fuse_fill_dir_t filler, off_t
         return -(mofs_to_os_errno(MOFS_EINVAL));
     }
 
+    mofs_core_sync_lock();
+
     handle = mofs_opendir(path);
     if (handle == NULL) {
-        return fuse_neg_errno_from_mofs();
+        ret = fuse_neg_errno_from_mofs();
+        goto out_unlock;
     }
 
     /* offset is a readdir cookie, not byte offset. */
@@ -545,9 +549,13 @@ int mofs_readdir_fuse(const char *path, void *buf, fuse_fill_dir_t filler, off_t
     }
 
 out:
-    if ((mofs_closedir(handle) != 0) && (ret == 0)) {
-        ret = fuse_neg_errno_from_mofs();
+    if (handle != NULL) {
+        if ((mofs_closedir(handle) != 0) && (ret == 0)) {
+            ret = fuse_neg_errno_from_mofs();
+        }
     }
+out_unlock:
+    mofs_core_sync_unlock();
     return ret;
 }
 

@@ -77,7 +77,7 @@ int main(int argc, char *argv[])
 
     /* FUSE main */
     mofs_fuse_ctx_t fuse_ctx;
-#if 0 /* Normal*/
+#if 1 /* Normal: libfuse multi-threaded (core ops serialized in POSIX layer) */
     int   fuse_argc    = 2;
     char *fuse_argv[2] = {argv[0], (char *)mount_point};
 #else /* Debug*/

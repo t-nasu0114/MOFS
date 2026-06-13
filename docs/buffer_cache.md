@@ -77,7 +77,20 @@ flowchart TB
 | 追い出し | dirty スロットは `write_continuous_blocks_raw` で書き出してから再利用 |
 | `mofs_bcache_flush` | 全 dirty スロットを書き出し、`dev_fsync` で同期 |
 | `mofs_bcache_invalidate` | スロットを破棄（dirty でも書き戻さない）。ブロック解放・再割当前に使用 |
+| `mofs_bcache_modify_block` | 1 ブロック内の部分更新をキャッシュ mutex 下で原子的に実行（inode 更新等） |
 | アンマウント | `mofs_bcache_flush` → `mofs_bcache_fini` |
+
+### スレッド安全性
+
+FUSE は libfuse 既定でリクエストを複数スレッドで処理する。排他制御の全体像（POSIX / inode / bcache の 3 層、再帰 mutex、atime 部分更新など）は **[concurrency.md](concurrency.md)** を参照。
+
+本節ではキャッシュ層に限定した要点のみ記す。
+
+| 層 | 役割 |
+|----|------|
+| **POSIX API** (`posix.c`) | `mofs_core_sync_lock` で各公開 API 呼び出しを直列化 |
+| **inode テーブル** (`mofs_inode.c`) | inode ブロック RMW と `mofs_inode_stamp_persist` |
+| **バッファキャッシュ** (本モジュール, cache ON 時) | キャッシュプール mutex + `mofs_bcache_modify_block` |
 
 ### ビルド時設定
 
@@ -204,6 +217,20 @@ int mofs_bcache_invalidate(unsigned int blk_num);
 | 動作 | `blk_num` のキャッシュエントリを破棄（dirty でも書き戻さない） |
 | 呼び出し元 | `free_list_chain`、`free_data_block` |
 | 戻り値 | 常に `0` |
+
+### `mofs_bcache_modify_block`
+
+```c
+int mofs_bcache_modify_block(unsigned int blk_num, mofs_size_t byte_off,
+                             const void *patch, mofs_size_t patch_len);
+```
+
+| 項目 | 内容 |
+|------|------|
+| 動作 | 指定ブロック内の `[byte_off, byte_off+patch_len)` をキャッシュ mutex 下で更新 |
+| 呼び出し元 | `mofs_write_inode`（キャッシュ有効時） |
+| 成功 | `0` |
+| 失敗 | `MOFS_EINVAL`（未初期化・範囲外）、`MOFS_EIO`、raw I/O 由来の errno |
 
 ### ディスパッチャ（`mofs_block.h`）
 

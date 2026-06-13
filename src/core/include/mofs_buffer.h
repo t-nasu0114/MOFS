@@ -12,5 +12,6 @@ int  mofs_bcache_write_blocks(int fd, const void *buf, unsigned int req_blk_num,
                               unsigned int *written_blk_num, mofs_size_t *fraction);
 int  mofs_bcache_flush(void);
 int  mofs_bcache_invalidate(unsigned int blk_num);
+int  mofs_bcache_modify_block(unsigned int blk_num, mofs_size_t byte_off, const void *patch, mofs_size_t patch_len);
 
 #endif /* __MOFS_BUFFER__ */

@@ -1,12 +1,17 @@
 #include "mofs_block.h"
+#include <mofs_config.h>
 #include <mofs_core.h>
 #include <mofs_devio.h>
 #include <mofs_errno.h>
 #include <mofs_port_errno.h>
 #include <mofs_inode.h>
 #include <mofs_port_mem.h>
+#include <mofs_port_sync.h>
 #include <mofs_port_time.h>
 #include <mofs_types.h>
+#if MOFS_BUFFER_CACHE_ENABLE
+#include <mofs_buffer.h>
+#endif
 
 /**
  * @brief Update selected inode timestamp fields to the current time.
@@ -345,6 +350,8 @@ int mofs_read_inode(int inode_num, mofs_inode_t *inode)
     inode_offset = (inode_num * (int)sizeof(mofs_inode_t)) % (int)bb;
 
     if (ret == 0) {
+        mofs_core_sync_lock();
+
         ret = read_continuous_blocks(ctx.dev_fd, buf, 1, blk_offset, &read_blk_num, &fraction);
         if (ret != 0) {
             /* Do nothing */
@@ -354,12 +361,81 @@ int mofs_read_inode(int inode_num, mofs_inode_t *inode)
             inode_ptr = (char *)buf + inode_offset;
             mofs_memcpy(inode, inode_ptr, sizeof(mofs_inode_t));
         }
+
+        mofs_core_sync_unlock();
     }
 
     if (buf != NULL) {
         mofs_free(buf);
     }
 
+    return ret;
+}
+
+/**
+ * @brief Read-modify-write inode timestamp fields under core metadata lock.
+ *
+ * Function behavior:
+ * - Reads the on-disk inode entry inside `mofs_core_sync_lock()`.
+ * - Updates only the timestamp fields selected by `mask`.
+ * - Writes the inode-table block back before releasing the lock.
+ *
+ * @param[in] inode_num Inode number to update.
+ * @param[in] mask Bitmask of `MOFS_INODE_TIME_*` values.
+ * @return 0 on success.
+ * @return MOFS_EINVAL if arguments are invalid.
+ * @return MOFS_EIO if a short block read/write is detected.
+ * @return Non-zero errno value from lower-level I/O/allocation failures.
+ */
+int mofs_inode_stamp_persist(int inode_num, unsigned int mask)
+{
+    int          ret             = 0;
+    mofs_off_t        blk_offset      = 0;
+    mofs_off_t        inode_offset    = 0;
+    unsigned int written_blk_num = 0;
+    unsigned int read_blk_num    = 0;
+    mofs_size_t       fraction        = 0;
+    void        *blk_buf         = NULL;
+    mofs_inode_t *inode_ptr      = NULL;
+    mofs_uint32_t     bb              = ctx.sp_blk.blk_size;
+
+    if ((inode_num < 0) || (ctx.sp_blk.inode_num <= inode_num) || (mask == 0U)) {
+        return MOFS_EINVAL;
+    }
+
+    blk_buf = mofs_malloc((mofs_size_t)bb);
+    if (blk_buf == NULL) {
+        return get_errno();
+    }
+
+    blk_offset = ctx.sp_blk.inode_table_start;
+    blk_offset += (inode_num * (int)sizeof(mofs_inode_t)) / (int)bb;
+    inode_offset = (inode_num * (int)sizeof(mofs_inode_t)) % (int)bb;
+
+    mofs_core_sync_lock();
+
+    ret = read_continuous_blocks(ctx.dev_fd, blk_buf, 1, blk_offset, &read_blk_num, &fraction);
+    if (ret != 0) {
+        /* Do nothing */
+    } else if ((read_blk_num != 1) || (fraction != 0)) {
+        ret = MOFS_EIO;
+    } else {
+        inode_ptr = (mofs_inode_t *)((char *)blk_buf + inode_offset);
+        ret       = mofs_inode_stamp_now(inode_ptr, mask);
+    }
+
+    if (ret == 0) {
+        ret = write_continuous_blocks(ctx.dev_fd, blk_buf, 1, blk_offset, &written_blk_num, &fraction);
+        if (ret != 0) {
+            /* Do nothing */
+        } else if ((written_blk_num != 1) || (fraction != 0)) {
+            ret = MOFS_EIO;
+        }
+    }
+
+    mofs_core_sync_unlock();
+
+    mofs_free(blk_buf);
     return ret;
 }
 
@@ -407,6 +483,16 @@ int mofs_write_inode(int inode_num, const mofs_inode_t *inode)
         blk_offset += (inode_num * (int)sizeof(mofs_inode_t)) / (int)bb;
         inode_offset = (inode_num * (int)sizeof(mofs_inode_t)) % (int)bb;
 
+#if MOFS_BUFFER_CACHE_ENABLE
+        ret = mofs_bcache_modify_block((unsigned int)blk_offset, (mofs_size_t)inode_offset, inode, sizeof(mofs_inode_t));
+        if (ret != MOFS_EINVAL) {
+            goto out;
+        }
+        ret = 0;
+#endif
+
+        mofs_core_sync_lock();
+
         ret = read_continuous_blocks(ctx.dev_fd, blk_buf, 1, blk_offset, &read_blk_num, &fraction);
         if (ret != 0) {
             /* Do nothing */
@@ -415,17 +501,20 @@ int mofs_write_inode(int inode_num, const mofs_inode_t *inode)
         } else {
             mofs_memcpy((char *)blk_buf + inode_offset, inode, sizeof(mofs_inode_t));
         }
-    }
 
-    if (ret == 0) {
-        ret = write_continuous_blocks(ctx.dev_fd, blk_buf, 1, blk_offset, &written_blk_num, &fraction);
-        if (ret != 0) {
-            /* Do nothing */
-        } else if ((written_blk_num != 1) || (fraction != 0)) {
-            ret = MOFS_EIO;
+        if (ret == 0) {
+            ret = write_continuous_blocks(ctx.dev_fd, blk_buf, 1, blk_offset, &written_blk_num, &fraction);
+            if (ret != 0) {
+                /* Do nothing */
+            } else if ((written_blk_num != 1) || (fraction != 0)) {
+                ret = MOFS_EIO;
+            }
         }
+
+        mofs_core_sync_unlock();
     }
 
+out:
     if (blk_buf != NULL) {
         mofs_free(blk_buf);
     }

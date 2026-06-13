@@ -1,4 +1,3 @@
-
 #include "mofs_block.h"
 #include <mofs_buffer.h>
 #include <mofs_config.h>
@@ -9,6 +8,53 @@
 #include <mofs_port_log.h>
 #include <mofs_port_mem.h>
 #include <mofs_types.h>
+
+#if !MOFS_BUFFER_CACHE_ENABLE
+
+int mofs_bcache_init(void)
+{
+    return 0;
+}
+
+void mofs_bcache_fini(void)
+{
+}
+
+int mofs_bcache_read_blocks(int fd, void *buf, unsigned int req_blk_num, unsigned int start_blk_num,
+                            unsigned int *read_blk_num, mofs_size_t *fraction)
+{
+    return read_continuous_blocks_raw(fd, buf, req_blk_num, start_blk_num, read_blk_num, fraction);
+}
+
+int mofs_bcache_write_blocks(int fd, const void *buf, unsigned int req_blk_num, unsigned int start_blk_num,
+                             unsigned int *written_blk_num, mofs_size_t *fraction)
+{
+    return write_continuous_blocks_raw(fd, buf, req_blk_num, start_blk_num, written_blk_num, fraction);
+}
+
+int mofs_bcache_modify_block(unsigned int blk_num, mofs_size_t byte_off, const void *patch, mofs_size_t patch_len)
+{
+    (void)blk_num;
+    (void)byte_off;
+    (void)patch;
+    (void)patch_len;
+    return MOFS_EINVAL;
+}
+
+int mofs_bcache_flush(void)
+{
+    return 0;
+}
+
+int mofs_bcache_invalidate(unsigned int blk_num)
+{
+    (void)blk_num;
+    return 0;
+}
+
+#else /* MOFS_BUFFER_CACHE_ENABLE */
+
+#include <mofs_port_sync.h>
 
 /* One cached logical block keyed by its absolute device block number. */
 typedef struct bcache_entry
@@ -23,6 +69,26 @@ typedef struct bcache_entry
 static bcache_entry_t bcache_pool[MOFS_BUFFER_CACHE_NUM];
 static mofs_bool      bcache_ready = MOFS_FALSE;
 static mofs_uint64_t  bcache_tick  = 0U;
+static mofs_mutex_t  *bcache_mutex = NULL;
+
+/**
+ * @brief Acquire the buffer-cache mutex.
+ *
+ * Function behavior:
+ * - Serializes cache pool access across FUSE worker threads.
+ */
+static void bcache_lock(void)
+{
+    (void)mofs_mutex_lock(bcache_mutex);
+}
+
+/**
+ * @brief Release the buffer-cache mutex.
+ */
+static void bcache_unlock(void)
+{
+    (void)mofs_mutex_unlock(bcache_mutex);
+}
 
 /**
  * @brief Mark a cache slot as the most recently used entry.
@@ -156,11 +222,22 @@ static int bcache_get_victim(int *out_idx)
 int mofs_bcache_init(void)
 {
     mofs_size_t blk_sz = (mofs_size_t)ctx.sp_blk.blk_size;
+    int         ret    = 0;
 
     if (blk_sz == 0U) {
         return MOFS_EINVAL;
     }
+
+    if (bcache_mutex == NULL) {
+        ret = mofs_mutex_init(&bcache_mutex);
+        if (ret != 0) {
+            return ret;
+        }
+    }
+
+    bcache_lock();
     if (bcache_ready == MOFS_TRUE) {
+        bcache_unlock();
         return 0;
     }
 
@@ -170,13 +247,14 @@ int mofs_bcache_init(void)
     for (int i = 0; i < (int)MOFS_BUFFER_CACHE_NUM; i++) {
         bcache_pool[i].data = mofs_malloc(blk_sz);
         if (bcache_pool[i].data == NULL) {
-            int err = get_errno();
+            ret = get_errno();
             /* Roll back allocations done so far. */
             for (int j = 0; j < i; j++) {
                 mofs_free(bcache_pool[j].data);
                 bcache_pool[j].data = NULL;
             }
-            return err;
+            bcache_unlock();
+            return ret;
         }
         bcache_pool[i].valid    = MOFS_FALSE;
         bcache_pool[i].dirty    = MOFS_FALSE;
@@ -186,6 +264,7 @@ int mofs_bcache_init(void)
 
     bcache_tick  = 0U;
     bcache_ready = MOFS_TRUE;
+    bcache_unlock();
     return 0;
 }
 
@@ -198,6 +277,11 @@ int mofs_bcache_init(void)
  */
 void mofs_bcache_fini(void)
 {
+    if (bcache_mutex == NULL) {
+        return;
+    }
+
+    bcache_lock();
     for (int i = 0; i < (int)MOFS_BUFFER_CACHE_NUM; i++) {
         if (bcache_pool[i].data != NULL) {
             mofs_free(bcache_pool[i].data);
@@ -207,6 +291,10 @@ void mofs_bcache_fini(void)
         bcache_pool[i].dirty = MOFS_FALSE;
     }
     bcache_ready = MOFS_FALSE;
+    bcache_unlock();
+
+    mofs_mutex_fini(bcache_mutex);
+    bcache_mutex = NULL;
 }
 
 /**
@@ -244,6 +332,8 @@ int mofs_bcache_read_blocks(int fd, void *buf, unsigned int req_blk_num, unsigne
     if (bcache_ready != MOFS_TRUE) {
         return read_continuous_blocks_raw(fd, buf, req_blk_num, start_blk_num, read_blk_num, fraction);
     }
+
+    bcache_lock();
 
     *fraction     = 0U;
     *read_blk_num = 0U;
@@ -291,6 +381,7 @@ int mofs_bcache_read_blocks(int fd, void *buf, unsigned int req_blk_num, unsigne
         buf           = (char *)buf + blk_bytes;
     }
 
+    bcache_unlock();
     return ret;
 }
 
@@ -328,6 +419,8 @@ int mofs_bcache_write_blocks(int fd, const void *buf, unsigned int req_blk_num, 
         return write_continuous_blocks_raw(fd, buf, req_blk_num, start_blk_num, written_blk_num, fraction);
     }
 
+    bcache_lock();
+
     *fraction        = 0U;
     *written_blk_num = 0U;
 
@@ -353,6 +446,71 @@ int mofs_bcache_write_blocks(int fd, const void *buf, unsigned int req_blk_num, 
         buf              = (const char *)buf + blk_bytes;
     }
 
+    bcache_unlock();
+    return ret;
+}
+
+/**
+ * @brief Patch one byte range inside a cached logical block atomically.
+ *
+ * Function behavior:
+ * - Loads the target block into the cache when it is not already present.
+ * - Applies the patch under the cache mutex so read-modify-write is atomic.
+ * - Marks the slot dirty for write-back.
+ *
+ * @param[in] blk_num Absolute device block number to update.
+ * @param[in] byte_off Byte offset within the block to patch.
+ * @param[in] patch Source bytes to copy into the block.
+ * @param[in] patch_len Number of bytes to copy.
+ * @return 0 on success.
+ * @return MOFS_EINVAL if arguments are invalid or the cache is not ready.
+ * @return MOFS_EIO on an unexpected short read while loading the block.
+ * @return Non-zero errno value propagated from cache eviction or raw block I/O.
+ */
+int mofs_bcache_modify_block(unsigned int blk_num, mofs_size_t byte_off, const void *patch, mofs_size_t patch_len)
+{
+    mofs_size_t blk_bytes = (mofs_size_t)ctx.sp_blk.blk_size;
+    int         idx       = -1;
+    int         ret       = 0;
+
+    if ((patch == NULL) || (patch_len == 0U) || (blk_bytes == 0U)) {
+        return MOFS_EINVAL;
+    }
+    if (bcache_ready != MOFS_TRUE) {
+        return MOFS_EINVAL;
+    }
+    if ((byte_off > blk_bytes) || (patch_len > blk_bytes) || ((byte_off + patch_len) > blk_bytes)) {
+        return MOFS_EINVAL;
+    }
+
+    bcache_lock();
+
+    idx = bcache_find(blk_num);
+    if (idx < 0) {
+        unsigned int read_one = 0U;
+        mofs_size_t  frac     = 0U;
+
+        ret = bcache_get_victim(&idx);
+        if (ret == 0) {
+            ret = read_continuous_blocks_raw(ctx.dev_fd, bcache_pool[idx].data, 1U, blk_num, &read_one, &frac);
+        }
+        if ((ret == 0) && ((read_one != 1U) || (frac != 0U))) {
+            ret = MOFS_EIO;
+        }
+        if (ret == 0) {
+            bcache_pool[idx].blk_num = blk_num;
+            bcache_pool[idx].valid   = MOFS_TRUE;
+            bcache_pool[idx].dirty   = MOFS_FALSE;
+        }
+    }
+
+    if (ret == 0) {
+        mofs_memcpy((char *)bcache_pool[idx].data + byte_off, patch, patch_len);
+        bcache_pool[idx].dirty = MOFS_TRUE;
+        bcache_touch(idx);
+    }
+
+    bcache_unlock();
     return ret;
 }
 
@@ -374,6 +532,8 @@ int mofs_bcache_flush(void)
         return 0;
     }
 
+    bcache_lock();
+
     for (int i = 0; i < (int)MOFS_BUFFER_CACHE_NUM; i++) {
         if ((bcache_pool[i].valid == MOFS_TRUE) && (bcache_pool[i].dirty == MOFS_TRUE)) {
             ret = bcache_flush_entry(i);
@@ -390,6 +550,7 @@ int mofs_bcache_flush(void)
         }
     }
 
+    bcache_unlock();
     return ret;
 }
 
@@ -412,11 +573,16 @@ int mofs_bcache_invalidate(unsigned int blk_num)
         return 0;
     }
 
+    bcache_lock();
+
     idx = bcache_find(blk_num);
     if (idx >= 0) {
         bcache_pool[idx].valid = MOFS_FALSE;
         bcache_pool[idx].dirty = MOFS_FALSE;
     }
 
+    bcache_unlock();
     return 0;
 }
+
+#endif /* MOFS_BUFFER_CACHE_ENABLE */

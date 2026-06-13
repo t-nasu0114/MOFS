@@ -14,5 +14,6 @@ int allocate_inode(int *inode_num);
 int free_inode(int inode_num);
 int mofs_path_to_inode_num(const char *path, int *inode_num);
 int mofs_inode_stamp_now(mofs_inode_t *inode, unsigned int mask);
+int mofs_inode_stamp_persist(int inode_num, unsigned int mask);
 
 #endif /* __MOFS_INODE__ */
