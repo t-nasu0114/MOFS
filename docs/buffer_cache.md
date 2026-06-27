@@ -96,15 +96,57 @@ FUSE は libfuse 既定でリクエストを複数スレッドで処理する。
 
 [`src/core/include/mofs_config.h`](../src/core/include/mofs_config.h) に既定値があり、CMake で上書き可能。
 
-| マクロ / オプション | 既定値 | 説明 |
-|--------------------|--------|------|
+#### キャッシュ有効 / 無効
+
+| マクロ / CMake オプション | 既定値 | 説明 |
+|--------------------------|--------|------|
 | `MOFS_BUFFER_CACHE_ENABLE` | `1` | `1`: 有効 / `0`: 無効 |
-| `MOFS_BUFFER_CACHE_NUM` | `64` | プール内バッファ数 |
+| `MOFS_BUFFER_CACHE_NUM` | `64` | 統一プール（unified）のバッファ数 |
 | CMake `MOFS_ENABLE_BUFFER_CACHE` | `ON` | `MOFS_BUFFER_CACHE_ENABLE` を compile definition で渡す |
 
 キャッシュ有効時はマウントで `O_SYNC` を付けず、永続化は `mofs_bcache_flush` と `dev_fsync` に委ねる。無効時は従来どおり `O_SYNC` 付きで直接 I/O する。
 
-メモリ使用量（概算）: `MOFS_BUFFER_CACHE_NUM × ctx.sp_blk.blk_size`（例: 64 × 4096 = 256 KiB）。
+メモリ使用量（概算）:
+- **unified**: `MOFS_BUFFER_CACHE_NUM × blk_size`（例: 64 × 4096 = 256 KiB）
+- **split**: `(MOFS_META_CACHE_NUM + MOFS_DATA_CACHE_NUM) × blk_size`（例: (16+48) × 4096 = 256 KiB）
+
+#### キャッシュ実装の選択（`MOFS_BCACHE_IMPL`）
+
+`MOFS_ENABLE_BUFFER_CACHE=ON` のとき、CMake オプション `MOFS_BCACHE_IMPL` で実装ファイルを切り替えられる。
+
+| `MOFS_BCACHE_IMPL` | ソースファイル | `MOFS_BCACHE_SPLIT` | 説明 |
+|---------------------|---------------|----------------------|------|
+| `unified`（既定） | `mofs_buffer.c` | `0` | 全ブロック共有の単一 LRU プール |
+| `split` | `mofs_buffer_split.c` | `1` | メタデータ用とデータ用の 2 プール |
+
+ビルド例:
+
+```bash
+# 統一プール（既定）
+cmake -B build -DMOFS_ENABLE_BUFFER_CACHE=ON
+
+# 分割プール
+cmake -B build -DMOFS_ENABLE_BUFFER_CACHE=ON -DMOFS_BCACHE_IMPL=split
+
+# キャッシュなし
+cmake -B build -DMOFS_ENABLE_BUFFER_CACHE=OFF
+```
+
+#### 分割プール用マクロ（`MOFS_BCACHE_IMPL=split` 時に有効）
+
+| マクロ | 既定値 | 説明 |
+|--------|--------|------|
+| `MOFS_META_CACHE_NUM` | `16` | メタデータ用スロット数（superblock・bitmap・inode テーブル） |
+| `MOFS_DATA_CACHE_NUM` | `48` | データブロック用スロット数（ファイルデータ・list node） |
+
+分類基準: `blk_num < ctx.sp_blk.data_region_start` ならメタデータプール、それ以外はデータプール。
+
+| 操作 | unified との違い |
+|------|-----------------|
+| read / write | ブロック番号でプールを選択。各プールが独立した LRU tick を持つ |
+| invalidate | データプールのみ検索。メタデータは invalidate しない |
+| flush | メタデータプール → データプールの順に全 dirty を書き出し |
+| mutex | 2 プール共有の 1 本（将来の分割拡張余地あり） |
 
 ---
 
@@ -373,9 +415,12 @@ sequenceDiagram
 
 | ファイル | 役割 |
 |---------|------|
-| `src/core/modules/mofs_buffer.c` | キャッシュ本体 |
-| `src/core/include/mofs_buffer.h` | core 内部 API 宣言 |
+| `src/core/modules/mofs_buffer.c` | 統一プール（unified）キャッシュ本体 |
+| `src/core/modules/mofs_buffer_split.c` | 分割プール（split）キャッシュ本体 |
+| `src/core/include/mofs_buffer.h` | core 内部 API 宣言（両実装共通） |
 | `src/core/include/mofs_config.h` | ビルド時設定マクロ |
+| `CMakeLists.txt` | `MOFS_BCACHE_IMPL` オプション定義 |
+| `src/core/CMakeLists.txt` | `MOFS_BCACHE_IMPL` に応じたソース選択 |
 | `src/core/modules/mofs_block.c` | ディスパッチャ、raw I/O、invalidate 呼び出し |
 | `src/core/modules/mofs_core.c` | init / flush / fini、O_SYNC 切替 |
 | `src/port/include/mofs_devio.h` | `dev_fsync` 宣言 |

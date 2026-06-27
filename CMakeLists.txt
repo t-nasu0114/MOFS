@@ -32,6 +32,13 @@ include_directories(${PROJECT_SOURCE_DIR}/src/port/include)
 # Block buffer cache. Overrides the default in src/core/include/mofs_config.h.
 option(MOFS_ENABLE_BUFFER_CACHE "Enable block buffer cache" ON)
 
+# Buffer cache implementation variant (only used when MOFS_ENABLE_BUFFER_CACHE=ON).
+#   unified - single shared LRU pool for all block types (default, mofs_buffer.c)
+#   split   - separate LRU pools for metadata and data blocks (mofs_buffer_split.c)
+set(MOFS_BCACHE_IMPL "unified" CACHE STRING
+    "Buffer cache implementation: unified | split")
+set_property(CACHE MOFS_BCACHE_IMPL PROPERTY STRINGS unified split)
+
 # -----------------------------------------------------------------------------
 # Library setting parts
 # -----------------------------------------------------------------------------
