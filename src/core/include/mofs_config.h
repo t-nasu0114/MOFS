@@ -20,4 +20,14 @@
 #define MOFS_BUFFER_CACHE_NUM 64U
 #endif
 
+/* Split-cache pool sizes (used when MOFS_BCACHE_SPLIT=1).
+ * Meta pool covers all blocks below data_region_start (superblock, bitmaps,
+ * inode table). Data pool covers file data and list-node blocks. */
+#ifndef MOFS_META_CACHE_NUM
+#define MOFS_META_CACHE_NUM 16U
+#endif
+#ifndef MOFS_DATA_CACHE_NUM
+#define MOFS_DATA_CACHE_NUM 48U
+#endif
+
 #endif /* __MOFS_CONFIG__ */

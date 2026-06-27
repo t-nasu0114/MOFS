@@ -3,6 +3,7 @@
 #include <mofs_errno.h>
 #include <mofs_file.h>
 #include <mofs_path.h>
+#include <mofs_port_sync.h>
 #include <mofs_posix.h>
 
 static void posix_set_errno(int err)
@@ -30,7 +31,9 @@ int mofs_stat(const char *path, mofs_stat_t *stbuf)
 {
     int err = 0;
 
+    mofs_core_sync_lock();
     err = mofs_stat_core(path, stbuf);
+    mofs_core_sync_unlock();
     if (err != 0) {
         posix_set_errno(err);
         return -1;
@@ -56,7 +59,9 @@ mofs_dirhandle_t *mofs_opendir(const char *path)
     mofs_dirhandle_t *handle = NULL;
     int               err    = 0;
 
+    mofs_core_sync_lock();
     err = mofs_opendir_core(path, &handle);
+    mofs_core_sync_unlock();
     if (err != 0) {
         posix_set_errno(err);
     }
@@ -79,7 +84,9 @@ int mofs_closedir(mofs_dirhandle_t *handle)
 {
     int err = 0;
 
+    mofs_core_sync_lock();
     err = mofs_closedir_core(&handle);
+    mofs_core_sync_unlock();
     if (err != 0) {
         posix_set_errno(err);
         err = -1;
@@ -106,7 +113,9 @@ mofs_dirent_t *mofs_readdir(mofs_dirhandle_t *handle)
     mofs_dirent_t *dirent = NULL;
     int            err    = 0;
 
+    mofs_core_sync_lock();
     err = mofs_readdir_core(&handle);
+    mofs_core_sync_unlock();
     if (err == 0) {
         if ((handle->dirent_buf.inode_num != 0) && (handle->dirent_buf.name[0] != '\0')) {
             dirent = &handle->dirent_buf;
@@ -139,7 +148,9 @@ mofs_filehandle_t *mofs_open(const char *path, int flags, mofs_mode_t mode)
     int                err    = 0;
     mofs_filehandle_t *handle = NULL;
 
+    mofs_core_sync_lock();
     err = mofs_open_core(path, flags, mode, &handle);
+    mofs_core_sync_unlock();
     if (err != 0) {
         posix_set_errno(err);
         handle = NULL;
@@ -163,7 +174,9 @@ int mofs_close(mofs_filehandle_t *handle)
 {
     int err = 0;
 
+    mofs_core_sync_lock();
     err = mofs_close_core(&handle);
+    mofs_core_sync_unlock();
     if (err != 0) {
         posix_set_errno(err);
     }
@@ -236,8 +249,8 @@ int mofs_write(mofs_filehandle_t *handle, const void *buf, mofs_size_t size)
  */
 int mofs_pread(mofs_filehandle_t *handle, void *buf, mofs_size_t size, mofs_off_t offset)
 {
-    int    err         = 0;
-    int    ret         = 0;
+    int         err         = 0;
+    int         ret         = 0;
     mofs_off_t  read_offset = offset;
     mofs_off_t  max_offset  = (mofs_off_t)MOFS_UINT32_MAX;
     mofs_size_t read_size   = 0;
@@ -247,7 +260,9 @@ int mofs_pread(mofs_filehandle_t *handle, void *buf, mofs_size_t size, mofs_off_
         return -1;
     }
 
+    mofs_core_sync_lock();
     err = mofs_read_core(&handle, buf, size, &read_offset, &read_size, MOFS_TRUE);
+    mofs_core_sync_unlock();
     if (err != 0) {
         posix_set_errno(err);
         ret = -1;
@@ -275,8 +290,8 @@ int mofs_pread(mofs_filehandle_t *handle, void *buf, mofs_size_t size, mofs_off_
  */
 int mofs_pwrite(mofs_filehandle_t *handle, const void *buf, mofs_size_t size, mofs_off_t offset)
 {
-    int    err          = 0;
-    int    ret          = 0;
+    int         err          = 0;
+    int         ret          = 0;
     mofs_off_t  write_offset = offset;
     mofs_off_t  max_offset   = (mofs_off_t)MOFS_UINT32_MAX;
     mofs_size_t written_size = 0;
@@ -286,7 +301,9 @@ int mofs_pwrite(mofs_filehandle_t *handle, const void *buf, mofs_size_t size, mo
         return -1;
     }
 
+    mofs_core_sync_lock();
     err = mofs_write_core(&handle, buf, size, &write_offset, &written_size, MOFS_TRUE);
+    mofs_core_sync_unlock();
     if (err != 0) {
         posix_set_errno(err);
         ret = -1;
@@ -315,13 +332,12 @@ int mofs_truncate(const char *path, mofs_off_t length)
     int inode_num = -1;
     int err       = 0;
 
+    mofs_core_sync_lock();
     err = mofs_path_to_inode_num(path, &inode_num);
-    if (err != 0) {
-        posix_set_errno(err);
-        return -1;
+    if (err == 0) {
+        err = mofs_truncate_core(inode_num, length);
     }
-
-    err = mofs_truncate_core(inode_num, length);
+    mofs_core_sync_unlock();
     if (err != 0) {
         posix_set_errno(err);
         return -1;
@@ -357,7 +373,9 @@ int mofs_ftruncate(mofs_filehandle_t *handle, mofs_off_t length)
         return -1;
     }
 
+    mofs_core_sync_lock();
     err = mofs_truncate_core(handle->inode_num, length);
+    mofs_core_sync_unlock();
     if (err != 0) {
         posix_set_errno(err);
         return -1;
@@ -381,7 +399,9 @@ int mofs_unlink(const char *path)
 {
     int err = 0;
 
+    mofs_core_sync_lock();
     err = mofs_unlink_core(path);
+    mofs_core_sync_unlock();
     if (err != 0) {
         posix_set_errno(err);
         return -1;
@@ -406,7 +426,9 @@ int mofs_mkdir(const char *path, mofs_mode_t mode)
 {
     int err = 0;
 
+    mofs_core_sync_lock();
     err = mofs_mkdir_core(path, mode);
+    mofs_core_sync_unlock();
     if (err != 0) {
         posix_set_errno(err);
         return -1;
@@ -430,7 +452,9 @@ int mofs_rmdir(const char *path)
 {
     int err = 0;
 
+    mofs_core_sync_lock();
     err = mofs_rmdir_core(path);
+    mofs_core_sync_unlock();
     if (err != 0) {
         posix_set_errno(err);
         return -1;

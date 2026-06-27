@@ -76,6 +76,36 @@ cmake --build build
 - `build/src/os/linux/tools/mkfs/mkfs.mofs`
 - `build/src/os/linux/tools/fuse/mofs`
 
+### Build options
+
+`cmake -S . -B build` の際に `-D<NAME>=<VALUE>` で指定できます。定義はルート [`CMakeLists.txt`](CMakeLists.txt) を参照してください。
+
+| オプション | 既定値 | 説明 |
+|-----------|--------|------|
+| `CMAKE_BUILD_TYPE` | `Debug` | ビルド種別（`Debug`, `Release`, `RelWithDebInfo`, `MinSizeRel`）。`Debug` は `-O0 -g3` |
+| `MOFS_ENABLE_BUFFER_CACHE` | `ON` | ブロックバッファキャッシュの有効化（`ON` / `OFF`） |
+| `MOFS_BCACHE_IMPL` | `unified` | キャッシュ実装の選択（`MOFS_ENABLE_BUFFER_CACHE=ON` 時のみ）。`unified`: 単一 LRU プール / `split`: メタデータ・データの 2 プール（実験用） |
+
+例:
+
+```sh
+# 既定（Debug、キャッシュ ON、unified）
+cmake -S . -B build
+
+# リリースビルド
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+# キャッシュなし（ベンチマーク比較用）
+cmake -S . -B build -DMOFS_ENABLE_BUFFER_CACHE=OFF
+
+# 分割プール実装（実験用）
+cmake -S . -B build -DMOFS_ENABLE_BUFFER_CACHE=ON -DMOFS_BCACHE_IMPL=split
+```
+
+configure 済みの値は `build/CMakeCache.txt` で確認できます。
+
+キャッシュの動作・プールサイズ等の compile-time マクロ（`MOFS_BUFFER_CACHE_NUM` など）は [`src/core/include/mofs_config.h`](src/core/include/mofs_config.h) に既定値があり、詳細は [`docs/buffer_cache.md`](docs/buffer_cache.md) を参照してください。
+
 ### Dependencies
 
 - [cmocka](https://cmocka.org/) — ユニットテスト（`libcmocka-dev`）

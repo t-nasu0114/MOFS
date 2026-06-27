@@ -6,6 +6,10 @@ This directory contains `cmocka` based tests grouped by layer.
 
 - `fixtures/`: shared test utilities for temporary test files.
 - `os/linux/`: OS abstraction layer tests (`os_service`).
+- `os/linux/benchmark/`: Linux-only manual throughput benchmarks (fio via FUSE mount; not run by CTest).
+  - `run_throughput_benchmarks.sh` performs clean build, mkfs, mount, fio runs, and unmount.
+  - Example: `RUN_LABEL=cached test/os/linux/benchmark/run_throughput_benchmarks.sh`
+  - Uncached: `RUN_LABEL=uncached MOFS_ENABLE_BUFFER_CACHE=OFF test/os/linux/benchmark/run_throughput_benchmarks.sh`
 - `posix/`: public POSIX-like API tests (`mofs_open`, `mofs_read`, etc.).
 - `core/`: core and format layer tests (`mofs_init_core`, `mofs_format`, etc.).
 

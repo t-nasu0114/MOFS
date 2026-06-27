@@ -8,6 +8,7 @@ set(OS_SERVICE_SRC_LIST
     os_mem.c
     os_posix_errno.c
     os_str.c
+    os_sync.c
     os_time.c
     os_user.c
 )

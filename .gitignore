@@ -12,3 +12,6 @@ scratch/
 
 ## cache files
 .cache/
+
+## test files
+test/os/linux/benchmark/results/

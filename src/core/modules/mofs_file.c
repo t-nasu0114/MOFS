@@ -627,10 +627,7 @@ int mofs_read_core(mofs_filehandle_t **handle, void *buf, mofs_size_t size, mofs
             (*handle)->file_offset = (unsigned int)(*offset + (mofs_off_t)(*read_size));
         }
         if ((*read_size) > 0U) {
-            ret = mofs_inode_stamp_now(&inode, MOFS_INODE_TIME_ATIME);
-            if (ret == 0) {
-                ret = mofs_write_inode((*handle)->inode_num, &inode);
-            }
+            ret = mofs_inode_stamp_persist((*handle)->inode_num, MOFS_INODE_TIME_ATIME);
         }
     }
 

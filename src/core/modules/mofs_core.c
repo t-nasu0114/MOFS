@@ -14,6 +14,7 @@
 #include <mofs_port_str.h>
 #include <mofs_types.h>
 #include <mofs_port_log.h>
+#include <mofs_port_sync.h>
 
 mofs_ctx_t ctx = {.init = MOFS_FALSE, .dev_path = NULL, .dev_fd = 0};
 
@@ -126,6 +127,11 @@ int mofs_init_core(const char *path, mofs_bool update_root_owner, mofs_uint32_t 
     }
 #endif
 
+    ret = mofs_core_sync_init();
+    if (ret != 0) {
+        goto out3;
+    }
+
     /* Mark as initalized */
     ctx.init = MOFS_TRUE;
 
@@ -149,6 +155,7 @@ int mofs_init_core(const char *path, mofs_bool update_root_owner, mofs_uint32_t 
     return 0;
 
 out3:
+    mofs_core_sync_fini();
 #if MOFS_BUFFER_CACHE_ENABLE
     mofs_bcache_fini();
 #endif
@@ -183,6 +190,7 @@ int mofs_fini_core(void)
     }
     mofs_bcache_fini();
 #endif
+    mofs_core_sync_fini();
     dev_close(ctx.dev_fd);
     mofs_free(ctx.dev_path);
     ctx.dev_path = NULL;
