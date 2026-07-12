@@ -1,0 +1,31 @@
+menuconfig MOFS
+	bool "MOFS file system"
+	help
+	  Enable the MOFS file system module.
+
+if MOFS
+
+config MOFS_BUFFER_CACHE
+	bool "Enable block buffer cache"
+	default y
+	help
+	  Map to MOFS_BUFFER_CACHE_ENABLE.
+
+config MOFS_BCACHE_SPLIT
+	bool "Use split buffer cache pools"
+	depends on MOFS_BUFFER_CACHE
+	default n
+	help
+	  Map to MOFS_BCACHE_SPLIT=1 when enabled.
+
+config MOFS_FS
+	bool "MOFS Zephyr VFS integration"
+	depends on FILE_SYSTEM
+	help
+	  Register MOFS with Zephyr VFS (fs_mount).
+
+module = MOFS
+module-str = mofs
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # MOFS
