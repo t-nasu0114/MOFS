@@ -26,24 +26,6 @@ int mofs_set_caller_for_peer_process(mofs_uid_t uid, mofs_gid_t gid, mofs_pid_t 
     return mofs_set_caller_user(uid, gid, pid);
 }
 
-int mofs_set_caller_supp_groups(const mofs_gid_t *groups, mofs_size_t group_count)
-{
-    mofs_size_t i;
-
-    if ((groups == NULL) && (group_count != 0U)) {
-        return MOFS_EINVAL;
-    }
-    if (group_count > MOFS_SUPP_GROUP_MAX) {
-        return MOFS_EINVAL;
-    }
-
-    caller_user_ctx.supp_group_count = group_count;
-    for (i = 0; i < group_count; i++) {
-        caller_user_ctx.supp_groups[i] = groups[i];
-    }
-    return 0;
-}
-
 int mofs_get_caller_user(mofs_user_ctx_t *user)
 {
     if (user == NULL) {
