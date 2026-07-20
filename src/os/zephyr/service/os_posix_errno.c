@@ -1,8 +1,9 @@
 #include <posix/mofs_posix_errno.h>
+#include <zephyr/kernel.h>
 
 /* Zephyr stub: single global errno slot (no TLS yet). */
 
-static int mofs_errno_slot;
+static Z_THREAD_LOCAL int mofs_errno_slot;
 
 /**
  * @brief Return a pointer to the MOFS errno slot (stub).
