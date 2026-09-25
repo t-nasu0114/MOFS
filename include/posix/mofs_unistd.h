@@ -16,5 +16,7 @@ int mofs_ftruncate(mofs_filehandle_t *handle, mofs_off_t length);
 int mofs_unlink(const char *path);
 int mofs_mkdir(const char *path, mofs_mode_t mode);
 int mofs_rmdir(const char *path);
+int mofs_rename(const char *old_path, const char *new_path);
+int mofs_fsync(mofs_filehandle_t *handle);
 
 #endif /* __MOFS_POSIX_UNISTD__ */

@@ -304,6 +304,21 @@ static void test_TC_P0_015_read_after_lseek(void **state)
     assert_int_equal(mofs_close(handle), 0);
 }
 
+/* TC-P0-016: fsync on an open handle succeeds. */
+static void test_TC_P0_016_fsync_open_handle(void **state)
+{
+    mofs_filehandle_t *handle = NULL;
+
+    (void)state;
+    handle = mofs_open("/existing.txt", MOFS_OFLAG_RDONLY, 0U);
+    assert_non_null(handle);
+    assert_int_equal(mofs_fsync(handle), 0);
+    assert_int_equal(mofs_close(handle), 0);
+    mofs_errno = 0;
+    assert_int_equal(mofs_fsync(NULL), -1);
+    assert_int_equal(mofs_errno, MOFS_EINVAL);
+}
+
 int main(void)
 {
     const struct CMUnitTest tests[] = {
@@ -330,6 +345,8 @@ int main(void)
         cmocka_unit_test_setup_teardown(test_TC_P0_014_lseek_past_eof, setup_posix_file_fixture,
                                         teardown_posix_file_fixture),
         cmocka_unit_test_setup_teardown(test_TC_P0_015_read_after_lseek, setup_posix_file_fixture,
+                                        teardown_posix_file_fixture),
+        cmocka_unit_test_setup_teardown(test_TC_P0_016_fsync_open_handle, setup_posix_file_fixture,
                                         teardown_posix_file_fixture),
     };
 

@@ -40,6 +40,7 @@ int remove_dir_entry(const char *component, int parent_inode_num);
 int add_dir_entry(const char *component, int parent_inode_num, int child_inode_num);
 int mofs_mkdir_core(const char *path, mofs_mode_t mode);
 int mofs_rmdir_core(const char *path);
+int mofs_rename_core(const char *old_path, const char *new_path);
 
 int mofs_opendir_core(const char *path, mofs_dirhandle_t **handle);
 int mofs_closedir_core(mofs_dirhandle_t **handle);

@@ -1,3 +1,4 @@
+#include <mofs_buffer.h>
 #include <mofs_core.h>
 #include <mofs_devio.h>
 #include <mofs_dir.h>
@@ -535,6 +536,69 @@ int mofs_rmdir(const char *path)
 
     mofs_core_sync_lock();
     err = mofs_rmdir_core(path);
+    mofs_core_sync_unlock();
+    if (err != 0) {
+        posix_set_errno(err);
+        return -1;
+    }
+
+    return 0;
+}
+
+/**
+ * @brief Rename a file or directory in POSIX layer.
+ *
+ * Function behavior:
+ * - Calls `mofs_rename_core()` under the core lock.
+ * - Updates `mofs_errno` with a `MOFS_E*` value on failure.
+ *
+ * @param[in] old_path Existing path.
+ * @param[in] new_path Destination path.
+ * @return 0 on success.
+ * @return -1 on failure (with `mofs_errno` updated).
+ */
+int mofs_rename(const char *old_path, const char *new_path)
+{
+    int err = 0;
+
+    mofs_core_sync_lock();
+    err = mofs_rename_core(old_path, new_path);
+    mofs_core_sync_unlock();
+    if (err != 0) {
+        posix_set_errno(err);
+        return -1;
+    }
+
+    return 0;
+}
+
+/**
+ * @brief Flush dirty MOFS cache for an open file.
+ *
+ * Function behavior:
+ * - Rejects a NULL or unused handle.
+ * - Flushes the volume write-back cache (`mofs_bcache_flush`), which also syncs the device.
+ * - Read-only opens are accepted. The cache is not tracked per file.
+ *
+ * @param[in] handle Opened file handle.
+ * @return 0 on success.
+ * @return -1 on failure (with `mofs_errno` updated).
+ */
+int mofs_fsync(mofs_filehandle_t *handle)
+{
+    int err = 0;
+
+    if (handle == NULL) {
+        posix_set_errno(MOFS_EINVAL);
+        return -1;
+    }
+
+    mofs_core_sync_lock();
+    if (handle->used == MOFS_FALSE) {
+        err = MOFS_EBADF;
+    } else {
+        err = mofs_bcache_flush();
+    }
     mofs_core_sync_unlock();
     if (err != 0) {
         posix_set_errno(err);
