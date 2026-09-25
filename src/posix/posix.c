@@ -1,7 +1,9 @@
 #include <mofs_core.h>
+#include <mofs_devio.h>
 #include <mofs_dir.h>
 #include <mofs_errno.h>
 #include <mofs_file.h>
+#include <mofs_inode.h>
 #include <mofs_path.h>
 #include <mofs_port_sync.h>
 #include <mofs_posix.h>
@@ -312,6 +314,85 @@ int mofs_pwrite(mofs_filehandle_t *handle, const void *buf, mofs_size_t size, mo
     }
 
     return ret;
+}
+
+/**
+ * @brief Reposition an opened file's current offset.
+ *
+ * Function behavior:
+ * - Computes the new offset from `whence` (`MOFS_SEEK_SET`, `MOFS_SEEK_CUR`,
+ *   or `MOFS_SEEK_END`) and `offset`.
+ * - `MOFS_SEEK_END` uses the inode size.
+ * - Rejects a negative result. Offsets past EOF are allowed.
+ * - Stores the result in `handle->file_offset`.
+ * - Updates `mofs_errno` with a `MOFS_E*` value on failure.
+ *
+ * @param[in] handle Opened file handle.
+ * @param[in] offset Signed byte displacement.
+ * @param[in] whence One of `MOFS_SEEK_SET`, `MOFS_SEEK_CUR`, or `MOFS_SEEK_END`.
+ * @return The resulting non-negative offset on success.
+ * @return -1 on failure (with `mofs_errno` updated). The previous offset is unchanged.
+ */
+mofs_off_t mofs_lseek(mofs_filehandle_t *handle, mofs_off_t offset, int whence)
+{
+    mofs_inode_t inode;
+    mofs_off_t   base    = 0;
+    mofs_off_t   new_pos = 0;
+    int          err     = 0;
+
+    if (handle == NULL) {
+        posix_set_errno(MOFS_EINVAL);
+        return (mofs_off_t)-1;
+    }
+    if (handle->used == MOFS_FALSE) {
+        posix_set_errno(MOFS_EBADF);
+        return (mofs_off_t)-1;
+    }
+
+    mofs_core_sync_lock();
+    switch (whence) {
+    case MOFS_SEEK_SET:
+        base = 0;
+        break;
+    case MOFS_SEEK_CUR:
+        base = (mofs_off_t)handle->file_offset;
+        break;
+    case MOFS_SEEK_END:
+        err = mofs_read_inode(handle->inode_num, &inode);
+        if (err != 0) {
+            mofs_core_sync_unlock();
+            posix_set_errno(err);
+            return (mofs_off_t)-1;
+        }
+        base = (mofs_off_t)inode.i_size;
+        break;
+    default:
+        mofs_core_sync_unlock();
+        posix_set_errno(MOFS_EINVAL);
+        return (mofs_off_t)-1;
+    }
+
+    if (offset >= 0) {
+        if ((offset > (mofs_off_t)MOFS_UINT32_MAX) || (base > ((mofs_off_t)MOFS_UINT32_MAX - offset))) {
+            err = MOFS_EINVAL;
+        } else {
+            new_pos = base + offset;
+        }
+    } else if ((offset == (mofs_off_t)INT64_MIN) || (base < -offset)) {
+        err = MOFS_EINVAL;
+    } else {
+        new_pos = base + offset;
+    }
+
+    if (err != 0) {
+        mofs_core_sync_unlock();
+        posix_set_errno(err);
+        return (mofs_off_t)-1;
+    }
+
+    handle->file_offset = (unsigned int)new_pos;
+    mofs_core_sync_unlock();
+    return new_pos;
 }
 
 /**
