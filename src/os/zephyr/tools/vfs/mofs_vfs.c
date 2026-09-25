@@ -11,6 +11,7 @@
 #include <zephyr/fs/fs_sys.h>
 #include <zephyr/init.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/storage/disk_access.h>
 
 LOG_MODULE_REGISTER(mofs_vfs, CONFIG_MOFS_LOG_LEVEL);
 
@@ -30,6 +31,7 @@ static int mofs_vfs_unlink(struct fs_mount_t *mountp, const char *name);
 static int mofs_vfs_rename(struct fs_mount_t *mountp, const char *from, const char *to);
 static int mofs_vfs_mkdir(struct fs_mount_t *mountp, const char *name);
 static int mofs_vfs_stat(struct fs_mount_t *mountp, const char *path, struct fs_dirent *entry);
+static int mofs_vfs_statvfs(struct fs_mount_t *mountp, const char *path, struct fs_statvfs *stat);
 static int mofs_vfs_sync(struct fs_file_t *filp);
 
 static struct fs_file_system_t mofs_fs = {
@@ -50,6 +52,7 @@ static struct fs_file_system_t mofs_fs = {
     .rename   = mofs_vfs_rename,
     .mkdir    = mofs_vfs_mkdir,
     .stat     = mofs_vfs_stat,
+    .statvfs  = mofs_vfs_statvfs,
 };
 
 /**
@@ -91,7 +94,9 @@ static int mofs_vfs_neg_errno(void)
  * Function behavior:
  * - Strips the Zephyr mount-point prefix from `fs_path`.
  * - Maps `FS_O_READ` / `FS_O_WRITE` / `FS_O_CREATE` onto `MOFS_OFLAG_*`.
- * - Rejects `FS_O_APPEND` (`MOFS_OFLAG_APPEND` is not implemented).
+ * - A missing access mode opens read-only so a missing path is `ENOENT`.
+ *   Later read and write still return `EACCES`, because Zephyr flag 0 is not `O_RDONLY`.
+ * - Rejects `FS_O_APPEND`. `MOFS_OFLAG_APPEND` is not implemented.
  * - Stores the MOFS handle in `filp->filep`.
  *
  * @param[in,out] filp Zephyr file object.
@@ -119,7 +124,8 @@ static int mofs_vfs_open(struct fs_file_t *filp, const char *fs_path, fs_mode_t 
     } else if ((flags & FS_O_WRITE) != 0) {
         mofs_flags = MOFS_OFLAG_WRONLY;
     } else {
-        return -EINVAL;
+        /* Zephyr allows open with no access bits; I/O then returns EACCES. */
+        mofs_flags = MOFS_OFLAG_RDONLY;
     }
     if ((flags & FS_O_CREATE) != 0) {
         mofs_flags |= MOFS_OFLAG_CREAT;
@@ -152,6 +158,9 @@ static ssize_t mofs_vfs_read(struct fs_file_t *filp, void *dest, size_t nbytes)
     if ((filp == NULL) || (filp->filep == NULL) || (dest == NULL)) {
         return -EINVAL;
     }
+    if ((filp->flags & FS_O_READ) == 0) {
+        return -EACCES;
+    }
 
     handle = (mofs_filehandle_t *)filp->filep;
     n      = mofs_read(handle, dest, (mofs_size_t)nbytes);
@@ -177,6 +186,9 @@ static ssize_t mofs_vfs_write(struct fs_file_t *filp, const void *src, size_t nb
 
     if ((filp == NULL) || (filp->filep == NULL) || (src == NULL)) {
         return -EINVAL;
+    }
+    if ((filp->flags & FS_O_WRITE) == 0) {
+        return -EACCES;
     }
 
     handle = (mofs_filehandle_t *)filp->filep;
@@ -522,6 +534,46 @@ static int mofs_vfs_stat(struct fs_mount_t *mountp, const char *path, struct fs_
     } else {
         entry->type = FS_DIR_ENTRY_FILE;
     }
+    return 0;
+}
+
+/**
+ * @brief Report RAM-disk geometry as volume statistics.
+ *
+ * Function behavior:
+ * - Fills block size and block count from `disk_access`.
+ * - Reports every block free. MOFS does not track free space yet.
+ *
+ * @param[in] mountp Zephyr mount descriptor.
+ * @param[in] path Absolute path. Unused.
+ * @param[out] stat Destination statistics.
+ * @return 0 on success.
+ * @return Negative errno on failure.
+ */
+static int mofs_vfs_statvfs(struct fs_mount_t *mountp, const char *path, struct fs_statvfs *stat)
+{
+    const char *disk;
+    uint32_t    sector_count = 0U;
+    uint32_t    sector_size  = 0U;
+
+    (void)path;
+    if ((mountp == NULL) || (mountp->storage_dev == NULL) || (stat == NULL)) {
+        return -EINVAL;
+    }
+
+    disk = (const char *)mountp->storage_dev;
+    if (disk_access_ioctl(disk, DISK_IOCTL_GET_SECTOR_COUNT, &sector_count) != 0) {
+        return -EIO;
+    }
+    if (disk_access_ioctl(disk, DISK_IOCTL_GET_SECTOR_SIZE, &sector_size) != 0) {
+        return -EIO;
+    }
+
+    memset(stat, 0, sizeof(*stat));
+    stat->f_bsize  = sector_size;
+    stat->f_frsize = sector_size;
+    stat->f_blocks = sector_count;
+    stat->f_bfree  = sector_count;
     return 0;
 }
 

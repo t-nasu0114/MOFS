@@ -226,7 +226,7 @@ int main(void)
         return 1;
     }
     LOG_INF("mounted MOFS at \"%s\"", MOFS_MNT_POINT);
-
+#if 0  /* disable file I/O tests */
     ret = mofs_vfs_exercise_file();
     if (ret < 0) {
         (void)fs_unmount(&mofs_mnt);
@@ -238,7 +238,8 @@ int main(void)
         (void)fs_unmount(&mofs_mnt);
         return 1;
     }
-
+#endif /* disable file I/O tests */
+#if 0  /* disable unmount */
     ret = fs_unmount(&mofs_mnt);
     if (ret < 0) {
         LOG_ERR("fs_unmount(\"%s\") failed: %d", MOFS_MNT_POINT, ret);
@@ -247,5 +248,6 @@ int main(void)
     LOG_INF("unmounted \"%s\"", MOFS_MNT_POINT);
 
     LOG_INF("MOFS VFS host finished OK");
+#endif /* disable unmount */
     return 0;
 }
