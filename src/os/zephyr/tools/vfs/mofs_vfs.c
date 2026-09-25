@@ -3,8 +3,10 @@
 #include <mofs_devio.h>
 #include <mofs_lifecycle.h>
 #include <mofs_port_errno.h>
+#include <mofs_inode.h>
 #include <mofs_posix.h>
 #include <mofs_types.h>
+#include <string.h>
 #include <zephyr/fs/fs.h>
 #include <zephyr/fs/fs_sys.h>
 #include <zephyr/init.h>
@@ -21,6 +23,14 @@ static int mofs_vfs_lseek(struct fs_file_t *filp, off_t off, int whence);
 static off_t mofs_vfs_tell(struct fs_file_t *filp);
 static int mofs_vfs_truncate(struct fs_file_t *filp, off_t length);
 static int mofs_vfs_close(struct fs_file_t *filp);
+static int mofs_vfs_opendir(struct fs_dir_t *dirp, const char *fs_path);
+static int mofs_vfs_readdir(struct fs_dir_t *dirp, struct fs_dirent *entry);
+static int mofs_vfs_closedir(struct fs_dir_t *dirp);
+static int mofs_vfs_unlink(struct fs_mount_t *mountp, const char *name);
+static int mofs_vfs_rename(struct fs_mount_t *mountp, const char *from, const char *to);
+static int mofs_vfs_mkdir(struct fs_mount_t *mountp, const char *name);
+static int mofs_vfs_stat(struct fs_mount_t *mountp, const char *path, struct fs_dirent *entry);
+static int mofs_vfs_sync(struct fs_file_t *filp);
 
 static struct fs_file_system_t mofs_fs = {
     .open     = mofs_vfs_open,
@@ -29,9 +39,17 @@ static struct fs_file_system_t mofs_fs = {
     .lseek    = mofs_vfs_lseek,
     .tell     = mofs_vfs_tell,
     .truncate = mofs_vfs_truncate,
+    .sync     = mofs_vfs_sync,
     .close    = mofs_vfs_close,
+    .opendir  = mofs_vfs_opendir,
+    .readdir  = mofs_vfs_readdir,
+    .closedir = mofs_vfs_closedir,
     .mount    = mofs_mount,
     .unmount  = mofs_unmount,
+    .unlink   = mofs_vfs_unlink,
+    .rename   = mofs_vfs_rename,
+    .mkdir    = mofs_vfs_mkdir,
+    .stat     = mofs_vfs_stat,
 };
 
 /**
@@ -273,6 +291,258 @@ static int mofs_vfs_close(struct fs_file_t *filp)
     filp->filep = NULL;
     if (err != 0) {
         return -mofs_to_os_errno(err);
+    }
+    return 0;
+}
+
+/**
+ * @brief Copy a path's final component into a Zephyr directory entry name.
+ *
+ * @param[out] entry Destination entry.
+ * @param[in] path Absolute or stripped path.
+ */
+static void mofs_vfs_set_basename(struct fs_dirent *entry, const char *path)
+{
+    const char *base = path;
+    const char *slash;
+
+    slash = strrchr(path, '/');
+    if ((slash != NULL) && (slash[1] != '\0')) {
+        base = slash + 1;
+    }
+    strncpy(entry->name, base, sizeof(entry->name) - 1U);
+    entry->name[sizeof(entry->name) - 1U] = '\0';
+}
+
+/**
+ * @brief Open a MOFS directory.
+ *
+ * @param[in,out] dirp Zephyr directory object.
+ * @param[in] fs_path Absolute path including the mount point.
+ * @return 0 on success.
+ * @return Negative errno on failure.
+ */
+static int mofs_vfs_opendir(struct fs_dir_t *dirp, const char *fs_path)
+{
+    mofs_dirhandle_t *handle;
+    const char       *path;
+
+    if ((dirp == NULL) || (dirp->mp == NULL) || (fs_path == NULL)) {
+        return -EINVAL;
+    }
+
+    path   = mofs_vfs_strip_prefix(fs_path, dirp->mp);
+    handle = mofs_opendir(path);
+    if (handle == NULL) {
+        return mofs_vfs_neg_errno();
+    }
+    dirp->dirp = handle;
+    return 0;
+}
+
+/**
+ * @brief Read the next MOFS directory entry.
+ *
+ * Function behavior:
+ * - Clears `mofs_errno` before `mofs_readdir()` so end-of-directory stays distinct from errors.
+ * - Fills type and size from the entry inode. `.` and `..` are returned as stored.
+ *
+ * @param[in] dirp Open Zephyr directory object.
+ * @param[out] entry Destination directory entry.
+ * @return 0 on success, including end of directory (`name[0] == 0`).
+ * @return Negative errno on failure.
+ */
+static int mofs_vfs_readdir(struct fs_dir_t *dirp, struct fs_dirent *entry)
+{
+    mofs_dirhandle_t *handle;
+    mofs_dirent_t    *dirent;
+    mofs_inode_t      inode;
+    int               err;
+
+    if ((dirp == NULL) || (dirp->dirp == NULL) || (entry == NULL)) {
+        return -EINVAL;
+    }
+
+    handle     = (mofs_dirhandle_t *)dirp->dirp;
+    mofs_errno = 0;
+    dirent     = mofs_readdir(handle);
+    if (dirent == NULL) {
+        if (mofs_errno != 0) {
+            return mofs_vfs_neg_errno();
+        }
+        entry->name[0] = '\0';
+        return 0;
+    }
+
+    strncpy(entry->name, dirent->name, sizeof(entry->name) - 1U);
+    entry->name[sizeof(entry->name) - 1U] = '\0';
+    err = mofs_read_inode((int)dirent->inode_num, &inode);
+    if (err != 0) {
+        return -mofs_to_os_errno(err);
+    }
+    if ((inode.i_mode & MOFS_FTYPE_DIR) != 0U) {
+        entry->type = FS_DIR_ENTRY_DIR;
+        entry->size = 0U;
+    } else {
+        entry->type = FS_DIR_ENTRY_FILE;
+        entry->size = (size_t)inode.i_size;
+    }
+    return 0;
+}
+
+/**
+ * @brief Close a MOFS directory handle.
+ *
+ * @param[in,out] dirp Open Zephyr directory object.
+ * @return 0 on success.
+ * @return Negative errno on failure. `dirp->dirp` is cleared either way.
+ */
+static int mofs_vfs_closedir(struct fs_dir_t *dirp)
+{
+    mofs_dirhandle_t *handle;
+
+    if ((dirp == NULL) || (dirp->dirp == NULL)) {
+        return -EINVAL;
+    }
+
+    handle     = (mofs_dirhandle_t *)dirp->dirp;
+    dirp->dirp = NULL;
+    if (mofs_closedir(handle) != 0) {
+        return mofs_vfs_neg_errno();
+    }
+    return 0;
+}
+
+/**
+ * @brief Remove a file, or an empty directory when unlink reports EISDIR.
+ *
+ * @param[in] mountp Zephyr mount descriptor.
+ * @param[in] name Absolute path including the mount point.
+ * @return 0 on success.
+ * @return Negative errno on failure.
+ */
+static int mofs_vfs_unlink(struct fs_mount_t *mountp, const char *name)
+{
+    const char *path;
+
+    if ((mountp == NULL) || (name == NULL)) {
+        return -EINVAL;
+    }
+
+    path = mofs_vfs_strip_prefix(name, mountp);
+    if (mofs_unlink(path) == 0) {
+        return 0;
+    }
+    if (mofs_errno == MOFS_EISDIR) {
+        if (mofs_rmdir(path) != 0) {
+            return mofs_vfs_neg_errno();
+        }
+        return 0;
+    }
+    return mofs_vfs_neg_errno();
+}
+
+/**
+ * @brief Rename a file or directory.
+ *
+ * @param[in] mountp Zephyr mount descriptor.
+ * @param[in] from Existing absolute path.
+ * @param[in] to Destination absolute path.
+ * @return 0 on success.
+ * @return Negative errno on failure.
+ */
+static int mofs_vfs_rename(struct fs_mount_t *mountp, const char *from, const char *to)
+{
+    const char *old_path;
+    const char *new_path;
+
+    if ((mountp == NULL) || (from == NULL) || (to == NULL)) {
+        return -EINVAL;
+    }
+
+    old_path = mofs_vfs_strip_prefix(from, mountp);
+    new_path = mofs_vfs_strip_prefix(to, mountp);
+    if (mofs_rename(old_path, new_path) != 0) {
+        return mofs_vfs_neg_errno();
+    }
+    return 0;
+}
+
+/**
+ * @brief Create a directory with mode 0777.
+ *
+ * @param[in] mountp Zephyr mount descriptor.
+ * @param[in] name Absolute path including the mount point.
+ * @return 0 on success.
+ * @return Negative errno on failure.
+ */
+static int mofs_vfs_mkdir(struct fs_mount_t *mountp, const char *name)
+{
+    const char *path;
+
+    if ((mountp == NULL) || (name == NULL)) {
+        return -EINVAL;
+    }
+
+    path = mofs_vfs_strip_prefix(name, mountp);
+    if (mofs_mkdir(path, 0777U) != 0) {
+        return mofs_vfs_neg_errno();
+    }
+    return 0;
+}
+
+/**
+ * @brief Fill a Zephyr directory entry from `mofs_stat()`.
+ *
+ * @param[in] mountp Zephyr mount descriptor.
+ * @param[in] path Absolute path including the mount point.
+ * @param[out] entry Destination entry.
+ * @return 0 on success.
+ * @return Negative errno on failure.
+ */
+static int mofs_vfs_stat(struct fs_mount_t *mountp, const char *path, struct fs_dirent *entry)
+{
+    mofs_stat_t st;
+    const char *mofs_path;
+
+    if ((mountp == NULL) || (path == NULL) || (entry == NULL)) {
+        return -EINVAL;
+    }
+
+    mofs_path = mofs_vfs_strip_prefix(path, mountp);
+    if (mofs_stat(mofs_path, &st) != 0) {
+        return mofs_vfs_neg_errno();
+    }
+
+    mofs_vfs_set_basename(entry, mofs_path);
+    entry->size = (size_t)st.st_size;
+    if ((st.st_mode & MOFS_FTYPE_DIR) != 0U) {
+        entry->type = FS_DIR_ENTRY_DIR;
+        entry->size = 0U;
+    } else {
+        entry->type = FS_DIR_ENTRY_FILE;
+    }
+    return 0;
+}
+
+/**
+ * @brief Flush the MOFS write-back cache for an open file.
+ *
+ * @param[in] filp Open Zephyr file object.
+ * @return 0 on success.
+ * @return Negative errno on failure.
+ */
+static int mofs_vfs_sync(struct fs_file_t *filp)
+{
+    mofs_filehandle_t *handle;
+
+    if ((filp == NULL) || (filp->filep == NULL)) {
+        return -EINVAL;
+    }
+
+    handle = (mofs_filehandle_t *)filp->filep;
+    if (mofs_fsync(handle) != 0) {
+        return mofs_vfs_neg_errno();
     }
     return 0;
 }
