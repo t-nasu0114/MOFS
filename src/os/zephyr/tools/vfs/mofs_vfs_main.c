@@ -22,14 +22,20 @@
 
 LOG_MODULE_REGISTER(mofs_vfs_main, LOG_LEVEL_INF);
 
+#define ENABLE_FILE_IO_TESTS 0
+#define ENABLE_UNMOUNT       0
+
 #define MOFS_DISK_NAME    "RAM"
 #define MOFS_MNT_POINT    "/MOFS"
 #define MOFS_BLK_SIZE_APP 4096
+
+#if ENABLE_FILE_IO_TESTS
 #define MOFS_TEST_PATH    "/MOFS/hello.txt"
 #define MOFS_TEST_PAYLOAD "hello-mofs"
 #define MOFS_TEST_DIR     "/MOFS/dir"
 #define MOFS_TEST_CHILD   "/MOFS/dir/a.txt"
 #define MOFS_TEST_RENAMED "/MOFS/dir/b.txt"
+#endif /* ENABLE_FILE_IO_TESTS */
 
 static struct fs_mount_t mofs_mnt = {
     .type        = MOFS_FS_TYPE,
@@ -38,6 +44,7 @@ static struct fs_mount_t mofs_mnt = {
     .storage_dev = (void *)MOFS_DISK_NAME,
 };
 
+#if ENABLE_FILE_IO_TESTS
 /**
  * @brief Create a file, write a payload, seek back, and read it.
  *
@@ -194,6 +201,7 @@ static int mofs_vfs_exercise_dir(void)
     LOG_INF("dir ops OK: \"%s\"", MOFS_TEST_DIR);
     return 0;
 }
+#endif /* ENABLE_FILE_IO_TESTS */
 
 /**
  * @brief Format the RAM disk, mount MOFS, exercise file I/O, then unmount.
@@ -226,7 +234,7 @@ int main(void)
         return 1;
     }
     LOG_INF("mounted MOFS at \"%s\"", MOFS_MNT_POINT);
-#if 0  /* disable file I/O tests */
+#if ENABLE_FILE_IO_TESTS
     ret = mofs_vfs_exercise_file();
     if (ret < 0) {
         (void)fs_unmount(&mofs_mnt);
@@ -238,8 +246,8 @@ int main(void)
         (void)fs_unmount(&mofs_mnt);
         return 1;
     }
-#endif /* disable file I/O tests */
-#if 0  /* disable unmount */
+#endif /* ENABLE_FILE_IO_TESTS */
+#if ENABLE_UNMOUNT
     ret = fs_unmount(&mofs_mnt);
     if (ret < 0) {
         LOG_ERR("fs_unmount(\"%s\") failed: %d", MOFS_MNT_POINT, ret);
@@ -248,6 +256,6 @@ int main(void)
     LOG_INF("unmounted \"%s\"", MOFS_MNT_POINT);
 
     LOG_INF("MOFS VFS host finished OK");
-#endif /* disable unmount */
+#endif /* ENABLE_UNMOUNT */
     return 0;
 }
