@@ -8,6 +8,7 @@
 MOFS (My Original File System) は C99 で書かれた学習用ファイルシステムです。
 オンディスクフォーマット、コア実装、POSIX 風 API、そして Linux 上でイメージを
 フォーマット／FUSE 経由でマウントするツールを、なるべく小さく自前で実装しています。
+Zephyr では VFS 経由で同じコアを載せられます。
 
 ## Features
 
@@ -16,16 +17,18 @@ MOFS (My Original File System) は C99 で書かれた学習用ファイルシ�
 - 呼び出し元ユーザ情報に基づく Unix 風の owner/group/other パーミッションチェック
 - 通常ファイル／ディレクトリ（`.` / `..`）と、`atime` / `mtime` / `ctime`
 - POSIX 風 API: `open`, `close`, `read`, `write`, `pread`, `pwrite`, `truncate`, `ftruncate`,
-  `unlink`, `stat`, `mkdir`, `rmdir`, `opendir`, `readdir`, `closedir`
+  `unlink`, `stat`, `mkdir`, `rmdir`, `opendir`, `readdir`, `closedir`, `rename`, `fsync`, `lseek`
 - ツール: イメージをフォーマットする `mkfs.mofs` と、FUSE マウントツール（`mofs`）
-- OS / core / POSIX 各レイヤをカバーする cmocka ベースのテスト
+- Zephyr VFS アダプタと評価用ホスト（`src/os/zephyr/tools/vfs/`）
+- OS / core / POSIX 各レイヤをカバーする cmocka ベースのテスト（Linux）
+- Zephyr 共通 FS ztest ハーネス（`test/os/zephyr/`）
 
 ## Architecture
 
 MOFS は静的ライブラリをレイヤとして積み重ねています。依存関係は下方向に流れます。
 
 ```
-tools (mkfs.mofs, mofs/FUSE)
+tools (mkfs.mofs, mofs/FUSE, Zephyr VFS host / ztest)
         │
         ▼
    posix_api          src/posix/
@@ -37,16 +40,19 @@ mofs_core / mofs_format   src/core/
    os_service          src/os/<platform>/service/
 ```
 
-| Layer          | Library        | Location                          |
-|----------------|----------------|-----------------------------------|
-| OS abstraction | `os_service`   | `src/os/linux/service/`           |
-| Formatter      | `mofs_format`  | `src/core/modules/mofs_format.c`  |
-| Filesystem core| `mofs_core`    | `src/core/modules/`               |
-| POSIX wrapper  | `posix_api`    | `src/posix/`                      |
-| Tools          | `mkfs.mofs`, `mofs` | `src/os/linux/tools/`        |
+| Layer          | Library / app        | Location                          |
+|----------------|----------------------|-----------------------------------|
+| OS abstraction | `os_service`         | `src/os/linux/service/`, `src/os/zephyr/service/` |
+| Formatter      | `mofs_format`        | `src/core/modules/mofs_format.c`  |
+| Filesystem core| `mofs_core`          | `src/core/modules/`               |
+| POSIX wrapper  | `posix_api`          | `src/posix/`                      |
+| Tools (Linux)  | `mkfs.mofs`, `mofs`  | `src/os/linux/tools/`             |
+| VFS (Zephyr)   | `mofs_vfs.c`         | `src/os/zephyr/tools/vfs/`        |
+| Host / tests   | `mofs_vfs_main`, ztest | `src/os/zephyr/tools/vfs/`, `test/os/zephyr/` |
 
 公開ヘッダは `include/`（例: `mofs_posix.h`, `mofs_format.h`, `mofs_lifecycle.h`）にあります。
 core 内部ヘッダは `src/core/include/`、プラットフォーム抽象化ヘッダは `src/os/<platform>/include/` にあります。
+Zephyr west モジュール定義は [`zephyr/module.yml`](zephyr/module.yml) です。
 
 ## Directory structure
 
@@ -57,8 +63,17 @@ core 内部ヘッダは `src/core/include/`、プラットフォーム抽象化�
 ├── src/
 │   ├── core/           # format / inode / block / dir / path / perm / file / lifecycle
 │   ├── posix/          # POSIX 風 API ラッパ
-│   └── os/linux/       # OS service、ヘッダ、ツール（mkfs, fuse）
-├── test/               # cmocka テスト（os / core / posix）
+│   ├── port/           # 移植契約 (HAL)
+│   └── os/
+│       ├── linux/      # OS service、ヘッダ、ツール（mkfs, fuse）
+│       └── zephyr/     # OS service、ヘッダ、VFS（mofs_vfs.c / mofs_vfs_main）
+├── zephyr/             # west モジュール（CMake / Kconfig）
+├── test/
+│   ├── os/linux/       # cmocka（Linux）
+│   ├── os/zephyr/      # Zephyr 共通 FS ztest ハーネス
+│   ├── core/
+│   ├── posix/
+│   └── fixtures/
 └── docs/               # オンディスク構造などのメモ
 ```
 
@@ -111,6 +126,42 @@ configure 済みの値は `build/CMakeCache.txt` で確認できます。
 - [cmocka](https://cmocka.org/) — ユニットテスト（`libcmocka-dev`）
 - [libfuse 3](https://github.com/libfuse/libfuse) — FUSE マウントツール（`fuse3`、`pkg-config` で検出）
 
+## Build on Zephyr
+
+Zephyr 向けは west モジュールとしてビルドします。ホストの CMake ツリーには含めません。
+
+前提:
+
+- Zephyr west ワークスペース（例: `~/work/zephyrproject`）と venv
+- ビルド時に `-DEXTRA_ZEPHYR_MODULES=$MOFS` でこのリポジトリのルートを渡す（[`zephyr/module.yml`](zephyr/module.yml)）
+- ボード例: `qemu_cortex_r5`
+- `$MOFS` はリポジトリの絶対パス
+
+評価用ホストは [`src/os/zephyr/tools/vfs/`](src/os/zephyr/tools/vfs/)（`mofs_vfs_main.c`）です。起動時に `mofs_format` → `fs_mount` → 簡単なファイル／ディレクトリ操作 → `fs_unmount` を行います。
+
+```sh
+export MOFS=/path/to/MOFS
+cd ~/work/zephyrproject && source ./.venv/bin/activate
+west build -p always -b qemu_cortex_r5 $MOFS/src/os/zephyr/tools/vfs -- \
+  -DEXTRA_ZEPHYR_MODULES=$MOFS
+west build -t run
+```
+
+共通 FS テスト用アプリは [`test/os/zephyr/`](test/os/zephyr/) です（ホスト cmocka の `test/CMakeLists.txt` には含めません）。
+
+```sh
+west build -p always -b qemu_cortex_r5 $MOFS/test/os/zephyr -- \
+  -DEXTRA_ZEPHYR_MODULES=$MOFS
+timeout 90 west build -t run   # ztest は成功後も QEMU が残るため
+```
+
+注記:
+
+- `CONFIG_MOFS` / `CONFIG_MOFS_FS` / `CONFIG_FILE_SYSTEM` は各アプリの `prj.conf` 側で有効にします。
+- フォーマットは mount 外の明示的 `mofs_format`（ホスト／テストフィクスチャ）です。
+- `FS_O_APPEND` は未サポート（`-ENOTSUP`）。`test_open_flags` の APPEND ケースは失敗し得ます。
+- ライブラリに入るのは `mofs_vfs.c` です。`mofs_vfs_main.c` は別アプリなので、ztest ビルドでは呼ばれません。
+
 ## Usage
 
 ### イメージをフォーマットする
@@ -136,6 +187,8 @@ build/src/os/linux/tools/fuse/mofs mofs.img /tmp/mofs
 
 ## Testing
 
+### Linux（cmocka）
+
 テストは cmocka を使い、CTest から実行します。
 
 ```sh
@@ -148,6 +201,19 @@ ctest --test-dir build -N
 ```
 
 テストは `test/os/linux/`, `test/core/`, `test/posix/` に分かれており、共通のヘルパは `test/fixtures/` にあります。
+
+### Zephyr（共通 FS ztest）
+
+[`test/os/zephyr/`](test/os/zephyr/) は Zephyr の共通 FS テストを薄いハーネスから呼び出します。手順は [Build on Zephyr](#build-on-zephyr) を参照してください。
+
+リンクする共通ソース:
+
+- `test_fs_basic.c`（open / read / write / seek / stat / truncate / unlink / sync）
+- `test_fs_dirops.c`（mkdir / readdir / rename など）
+- `test_fs_open_flags.c`
+- 依存の `test_fs_util.c`
+
+対象外: `test_fs_mkfs.c`、`test_fs_gc.c`、`test_fs_mount_flags.c`（未実装の mkfs / gc、および自動 format 前提と合わないため）。
 
 ## On-disk layout
 
@@ -169,4 +235,3 @@ ctest --test-dir build -N
 - 1 ファイルあたり最大データブロック数: 1024（ブロックサイズ 4KiB の場合 4MiB）
 - ファイル名長: 28 バイト
 - ルートディレクトリ inode: #2
-
