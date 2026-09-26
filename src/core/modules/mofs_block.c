@@ -893,35 +893,24 @@ rollback_bitmap:
  *
  * Function behavior:
  * - Calls `dev_read()` for `ctx.sp_blk.blk_size` bytes.
- * - Converts a low-level read error (`-1`) into `0` and reports the error
- *   code through `err`.
+ * - Returns the low-level `MOFS_E*` status separately from the byte count.
  *
  * @param[in] fd Device file descriptor.
  * @param[out] buf Destination buffer for one block.
- * @param[out] err Error code storage. Set to 0 on no low-level read error.
- * @return Number of bytes read (full block or a short read).
- * @return 0 when `dev_read()` fails with `-1` (details are stored in `*err`).
+ * @param[out] read_size Number of bytes read (full block or a short read).
+ * @return 0 on success, including a short read or end of device.
+ * @return A positive `MOFS_E*` value on failure.
  */
-static int read_one_block(int fd, void *buf, int *err)
+static int read_one_block(int fd, void *buf, mofs_size_t *read_size)
 {
     mofs_size_t const nb = mofs_io_blk_sz();
-    int          ret;
 
     if (nb == 0U) {
-        *err = MOFS_EINVAL;
-        return 0;
+        *read_size = 0U;
+        return MOFS_EINVAL;
     }
 
-    ret = dev_read(fd, buf, nb);
-
-    if (ret == -1) {
-        *err = get_errno();
-        ret  = 0;
-    } else {
-        *err = 0;
-    }
-
-    return ret;
+    return dev_read(fd, buf, nb, read_size);
 }
 
 /**
@@ -941,14 +930,15 @@ static int read_one_block(int fd, void *buf, int *err)
  * @param[out] fraction Number of bytes for a short read in the last attempt.
  * @return 0 on success (including short-read case; see `fraction`).
  * @return MOFS_EINVAL if arguments are invalid or offset is not block-aligned.
- * @return Non-zero errno value from `get_errno()` on read-related failures.
+ * @return A positive `MOFS_E*` value on read-related failures.
  */
 int read_continuous_blocks_raw(int fd, void *buf, unsigned int req_blk_num, unsigned int start_blk_num,
                                unsigned int *read_blk_num, mofs_size_t *fraction)
 {
-    int          err       = 0;
     int          ret       = 0;
     mofs_size_t const blk_bytes = mofs_io_blk_sz();
+    mofs_size_t       read_size = 0U;
+    mofs_off_t        new_offset = 0;
     mofs_uint64_t     byte_off;
 
     if ((fd < 0) || (buf == NULL) || (read_blk_num == NULL) || (fraction == NULL)) {
@@ -965,10 +955,8 @@ int read_continuous_blocks_raw(int fd, void *buf, unsigned int req_blk_num, unsi
     }
 
     if (ret == 0) {
-        mofs_off_t offset = dev_lseek(fd, (mofs_off_t)byte_off, MOFS_SEEK_SET);
-        if (offset < 0) {
-            ret = get_errno();
-        } else if (((mofs_uint64_t)offset % (mofs_uint64_t)blk_bytes) != 0ULL) {
+        ret = dev_lseek(fd, (mofs_off_t)byte_off, MOFS_SEEK_SET, &new_offset);
+        if ((ret == 0) && (((mofs_uint64_t)new_offset % (mofs_uint64_t)blk_bytes) != 0ULL)) {
             ret = MOFS_EINVAL;
         }
     }
@@ -978,16 +966,13 @@ int read_continuous_blocks_raw(int fd, void *buf, unsigned int req_blk_num, unsi
         *read_blk_num = 0U;
 
         for (unsigned int i = 0U; i < req_blk_num; i++) {
-            ret = read_one_block(fd, buf, &err);
-            if (ret == 0) {
-                ret = err;
+            ret = read_one_block(fd, buf, &read_size);
+            if (ret != 0) {
                 break;
-            } else if ((mofs_size_t)ret != blk_bytes) {
-                *fraction = (mofs_size_t)ret;
-                ret       = 0;
+            }
+            if (read_size != blk_bytes) {
+                *fraction = read_size;
                 break;
-            } else {
-                ret = 0;
             }
             *read_blk_num = *read_blk_num + 1;
             buf           = (char *)buf + blk_bytes;
@@ -1029,35 +1014,24 @@ int read_continuous_blocks(int fd, void *buf, unsigned int req_blk_num, unsigned
  *
  * Function behavior:
  * - Calls `dev_write()` for `ctx.sp_blk.blk_size` bytes.
- * - Converts a low-level write error (`-1`) into `0` and reports the error
- *   code through `err`.
+ * - Returns the low-level `MOFS_E*` status separately from the byte count.
  *
  * @param[in] fd Device file descriptor.
  * @param[in] buf Source buffer containing one block to write.
- * @param[out] err Error code storage. Set to 0 on no low-level write error.
- * @return Number of bytes written (full block or a short write).
- * @return 0 when `dev_write()` fails with `-1` (details are stored in `*err`).
+ * @param[out] written Number of bytes written (full block or a short write).
+ * @return 0 on success, including a short write.
+ * @return A positive `MOFS_E*` value on failure.
  */
-static int write_one_block(int fd, const void *buf, int *err)
+static int write_one_block(int fd, const void *buf, mofs_size_t *written)
 {
     mofs_size_t const nb = mofs_io_blk_sz();
-    int          ret;
 
     if (nb == 0U) {
-        *err = MOFS_EINVAL;
-        return 0;
+        *written = 0U;
+        return MOFS_EINVAL;
     }
 
-    ret = dev_write(fd, buf, nb);
-
-    if (ret == -1) {
-        *err = get_errno();
-        ret  = 0;
-    } else {
-        *err = 0;
-    }
-
-    return ret;
+    return dev_write(fd, buf, nb, written);
 }
 
 /**
@@ -1077,14 +1051,15 @@ static int write_one_block(int fd, const void *buf, int *err)
  * @param[out] fraction Number of bytes for a short write in the last attempt.
  * @return 0 on success (including short-write case; see `fraction`).
  * @return MOFS_EINVAL if arguments are invalid or offset is not block-aligned.
- * @return Non-zero errno value from `get_errno()` on write-related failures.
+ * @return A positive `MOFS_E*` value on write-related failures.
  */
 int write_continuous_blocks_raw(int fd, const void *buf, unsigned int req_blk_num, unsigned int start_blk_num,
                                 unsigned int *written_blk_num, mofs_size_t *fraction)
 {
-    int          err       = 0;
     int          ret       = 0;
     mofs_size_t const blk_bytes = mofs_io_blk_sz();
+    mofs_size_t       written = 0U;
+    mofs_off_t        new_offset = 0;
     mofs_uint64_t     byte_off;
 
     if ((fd < 0) || (buf == NULL) || (written_blk_num == NULL) || (fraction == NULL)) {
@@ -1097,11 +1072,9 @@ int write_continuous_blocks_raw(int fd, const void *buf, unsigned int req_blk_nu
 
     /* Align check */
     if (ret == 0) {
-        byte_off     = (mofs_uint64_t)start_blk_num * (mofs_uint64_t)blk_bytes;
-        mofs_off_t offset = dev_lseek(fd, (mofs_off_t)byte_off, MOFS_SEEK_SET);
-        if (offset < 0) {
-            ret = get_errno();
-        } else if (((mofs_uint64_t)offset % (mofs_uint64_t)blk_bytes) != 0ULL) {
+        byte_off = (mofs_uint64_t)start_blk_num * (mofs_uint64_t)blk_bytes;
+        ret      = dev_lseek(fd, (mofs_off_t)byte_off, MOFS_SEEK_SET, &new_offset);
+        if ((ret == 0) && (((mofs_uint64_t)new_offset % (mofs_uint64_t)blk_bytes) != 0ULL)) {
             ret = MOFS_EINVAL;
         }
     }
@@ -1111,16 +1084,13 @@ int write_continuous_blocks_raw(int fd, const void *buf, unsigned int req_blk_nu
         *written_blk_num = 0U;
 
         for (unsigned int i = 0U; i < req_blk_num; i++) {
-            ret = write_one_block(fd, buf, &err);
-            if (ret == 0) {
-                ret = err;
+            ret = write_one_block(fd, buf, &written);
+            if (ret != 0) {
                 break;
-            } else if ((mofs_size_t)ret != blk_bytes) {
-                *fraction = (mofs_size_t)ret;
-                ret       = 0;
+            }
+            if (written != blk_bytes) {
+                *fraction = written;
                 break;
-            } else {
-                ret = 0;
             }
             *written_blk_num = *written_blk_num + 1;
             buf              = (char *)buf + blk_bytes;

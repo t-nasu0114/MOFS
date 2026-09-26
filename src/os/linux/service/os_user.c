@@ -57,12 +57,12 @@ static int read_supp_groups_from_os(mofs_user_ctx_t *user)
 
 int mofs_set_caller_user(mofs_uid_t uid, mofs_gid_t gid, mofs_pid_t pid)
 {
-    caller_user_ctx.uid                = uid;
-    caller_user_ctx.gid                = gid;
-    caller_user_ctx.pid                = pid;
-    caller_user_ctx.supp_groups[0]     = gid;
-    caller_user_ctx.supp_group_count   = 1;
-    caller_user_ctx.valid              = MOFS_TRUE;
+    caller_user_ctx.uid              = uid;
+    caller_user_ctx.gid              = gid;
+    caller_user_ctx.pid              = pid;
+    caller_user_ctx.supp_groups[0]   = gid;
+    caller_user_ctx.supp_group_count = 1;
+    caller_user_ctx.valid            = MOFS_TRUE;
 
     return 0;
 }
@@ -71,9 +71,9 @@ int mofs_set_caller_user(mofs_uid_t uid, mofs_gid_t gid, mofs_pid_t pid)
 static int parse_proc_status_groups(mofs_pid_t pid, mofs_gid_t *out, mofs_size_t max_out, mofs_size_t *out_count)
 {
     char    path[64];
-    FILE   *fp    = NULL;
-    char   *line  = NULL;
-    size_t  cap   = 0;
+    FILE   *fp   = NULL;
+    char   *line = NULL;
+    size_t  cap  = 0;
     ssize_t nread;
 
     if ((pid <= 0) || (out == NULL) || (out_count == NULL)) {
@@ -118,26 +118,7 @@ static int parse_proc_status_groups(mofs_pid_t pid, mofs_gid_t *out, mofs_size_t
 }
 #endif /* defined(__linux__) */
 
-int mofs_set_caller_for_peer_process(mofs_uid_t uid, mofs_gid_t gid, mofs_pid_t pid)
-{
-    int          ret;
-    mofs_gid_t   groups[MOFS_SUPP_GROUP_MAX];
-    mofs_size_t  n = 0;
-
-    ret = mofs_set_caller_user(uid, gid, pid);
-    if (ret != 0) {
-        return ret;
-    }
-#if defined(__linux__)
-    ret = parse_proc_status_groups(pid, groups, MOFS_SUPP_GROUP_MAX, &n);
-    if ((ret == 0) && (n > 0U)) {
-        (void)mofs_set_caller_supp_groups(groups, n);
-    }
-#endif
-    return 0;
-}
-
-int mofs_set_caller_supp_groups(const mofs_gid_t *groups, mofs_size_t group_count)
+static int set_caller_supp_groups(const mofs_gid_t *groups, mofs_size_t group_count)
 {
     if ((group_count > 0U) && (groups == NULL)) {
         return MOFS_EINVAL;
@@ -157,6 +138,25 @@ int mofs_set_caller_supp_groups(const mofs_gid_t *groups, mofs_size_t group_coun
         caller_user_ctx.supp_group_count = 1U;
     }
 
+    return 0;
+}
+
+int mofs_set_caller_for_peer_process(mofs_uid_t uid, mofs_gid_t gid, mofs_pid_t pid)
+{
+    int         ret;
+    mofs_gid_t  groups[MOFS_SUPP_GROUP_MAX];
+    mofs_size_t n = 0;
+
+    ret = mofs_set_caller_user(uid, gid, pid);
+    if (ret != 0) {
+        return ret;
+    }
+#if defined(__linux__)
+    ret = parse_proc_status_groups(pid, groups, MOFS_SUPP_GROUP_MAX, &n);
+    if ((ret == 0) && (n > 0U)) {
+        (void)set_caller_supp_groups(groups, n);
+    }
+#endif
     return 0;
 }
 

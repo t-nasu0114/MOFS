@@ -48,7 +48,7 @@ static void test_TC_P1_011_format_with_invalid_path(void **state)
 
     (void)state;
     ret = mofs_format("/tmp/path_that_should_not_exist_mofs", 1, MOFS_BLK_SIZE);
-    assert_true(ret != 0);
+    assert_int_equal(ret, MOFS_ENOENT);
 }
 
 /* TC-P1-012: init_core succeeds after successful format. */

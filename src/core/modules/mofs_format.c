@@ -8,6 +8,28 @@
 #include <mofs_types.h>
 #include <mofs_port_log.h>
 
+static int seek_device(int fd, mofs_off_t offset)
+{
+    mofs_off_t new_offset = 0;
+
+    return dev_lseek(fd, offset, MOFS_SEEK_SET, &new_offset);
+}
+
+static int write_exact(int fd, const void *buf, mofs_size_t count)
+{
+    int         ret     = 0;
+    mofs_size_t written = 0U;
+
+    ret = dev_write(fd, buf, count, &written);
+    if (ret != 0) {
+        return ret;
+    }
+    if (written != count) {
+        return MOFS_EIO;
+    }
+    return 0;
+}
+
 /**
  * @brief Zero-fill one block at the specified block index.
  *
@@ -15,7 +37,7 @@
  * @param[in] block_num Absolute block index to clear.
  * @param[in] blk_bytes Logical block size in bytes.
  * @return 0 on success.
- * @return Non-zero errno value from `get_errno()` on seek/write failure.
+ * @return A positive `MOFS_E*` value on seek/write failure.
  */
 static int clear_blocks(int fd, mofs_uint64_t block_num, mofs_uint32_t blk_bytes)
 {
@@ -30,16 +52,16 @@ static int clear_blocks(int fd, mofs_uint64_t block_num, mofs_uint32_t blk_bytes
 
     mofs_memset(buf, 0, (mofs_size_t)blk_bytes);
 
-    if (dev_lseek(fd, offset, MOFS_SEEK_SET) < 0) {
+    ret = seek_device(fd, offset);
+    if (ret != 0) {
         mofs_log_err("Seek error at block %lu", (unsigned long)block_num);
-        ret = get_errno();
         mofs_free(buf);
         return ret;
     }
 
-    if (dev_write(fd, buf, (mofs_size_t)blk_bytes) != (int)(mofs_size_t)blk_bytes) {
+    ret = write_exact(fd, buf, (mofs_size_t)blk_bytes);
+    if (ret != 0) {
         mofs_log_err("Write error at block %lu", (unsigned long)block_num);
-        ret = get_errno();
         mofs_free(buf);
         return ret;
     }
@@ -63,19 +85,19 @@ static int clear_blocks(int fd, mofs_uint64_t block_num, mofs_uint32_t blk_bytes
  * @param[in] blk_size Logical block size in bytes; if negative, MOFS_BLK_SIZE_DEFAULT is used.
  * @return 0 on success.
  * @return MOFS_EINVAL if `blk_size` is unsupported or layout is impossible.
- * @return Non-zero errno value from `get_errno()` on device I/O failures.
+ * @return A positive `MOFS_E*` value on device I/O failures.
  */
 int mofs_format(const char *device_file, int fs_size, int blk_size)
 {
     int                ret           = 0;
+    int                close_ret     = 0;
     int                fd            = -1;
     mofs_uint32_t           eff_blk_bytes = MOFS_BLK_SIZE_DEFAULT;
     unsigned long long dev_size;
 
-    fd = dev_open(device_file, MOFS_IO_OPEN_FLAG_RDWR);
-    if (fd < 0) {
+    ret = dev_open(device_file, MOFS_IO_OPEN_FLAG_RDWR, &fd);
+    if (ret != 0) {
         mofs_log_err("Open %s error\n", device_file);
-        ret = get_errno();
         goto out1;
     }
 
@@ -93,7 +115,7 @@ int mofs_format(const char *device_file, int fs_size, int blk_size)
     if (fs_size > 0) {
         dev_size = (unsigned long long)(unsigned int)fs_size * (unsigned long long)eff_blk_bytes;
     } else {
-        dev_size = dev_get_size(fd, &ret);
+        ret = dev_get_size(fd, &dev_size);
         if (ret != 0) {
             mofs_log_err("Get device size error\n");
             goto out2;
@@ -149,15 +171,15 @@ int mofs_format(const char *device_file, int fs_size, int blk_size)
         goto out2;
     }
 
-    if (dev_lseek(fd, 0, MOFS_SEEK_SET) < 0) {
+    ret = seek_device(fd, 0);
+    if (ret != 0) {
         mofs_log_err("Seek error at superblock");
-        ret = get_errno();
         goto out2;
     }
 
-    if (dev_write(fd, &superblock, sizeof(superblock)) != (int)sizeof(superblock)) {
+    ret = write_exact(fd, &superblock, (mofs_size_t)sizeof(superblock));
+    if (ret != 0) {
         mofs_log_err("Write error at superblock");
-        ret = get_errno();
         goto out2;
     }
 
@@ -165,29 +187,29 @@ int mofs_format(const char *device_file, int fs_size, int blk_size)
 
     /* Allocate the No.2 inode for root directory and mark it as used in inode bitmap */
     mofs_uint8_t root_inode_bitmap = 0x04; /* Mark the No.2 inode as used. Note that it's not No.0 */
-    if (dev_lseek(fd, (mofs_off_t)((mofs_uint64_t)superblock.inode_bitmap_start * (mofs_uint64_t)eff_blk_bytes), MOFS_SEEK_SET) < 0) {
+    ret = seek_device(fd, (mofs_off_t)((mofs_uint64_t)superblock.inode_bitmap_start * (mofs_uint64_t)eff_blk_bytes));
+    if (ret != 0) {
         mofs_log_err("Seek error at root inode bitmap");
-        ret = get_errno();
         goto out2;
     }
 
-    if (dev_write(fd, &root_inode_bitmap, 1) != 1) {
+    ret = write_exact(fd, &root_inode_bitmap, 1U);
+    if (ret != 0) {
         mofs_log_err("Write error at root inode bitmap");
-        ret = get_errno();
         goto out2;
     }
 
     /* Allocate data block 0 (dir content) and block 1 (list node); mark both used */
     mofs_uint8_t root_data_bitmap = 0x03;
-    if (dev_lseek(fd, (mofs_off_t)((mofs_uint64_t)superblock.data_bitmap_start * (mofs_uint64_t)eff_blk_bytes), MOFS_SEEK_SET) < 0) {
+    ret = seek_device(fd, (mofs_off_t)((mofs_uint64_t)superblock.data_bitmap_start * (mofs_uint64_t)eff_blk_bytes));
+    if (ret != 0) {
         mofs_log_err("Seek error at root data bitmap");
-        ret = get_errno();
         goto out2;
     }
 
-    if (dev_write(fd, &root_data_bitmap, 1) != 1) {
+    ret = write_exact(fd, &root_data_bitmap, 1U);
+    if (ret != 0) {
         mofs_log_err("Write error at root data bitmap");
-        ret = get_errno();
         goto out2;
     }
 
@@ -222,17 +244,16 @@ int mofs_format(const char *device_file, int fs_size, int blk_size)
         list_ptr           = (mofs_uint32_t *)((unsigned char *)list_buf + sizeof(mofs_data_list_hdr_t));
         list_ptr[0]        = superblock.data_region_start;
 
-        if (dev_lseek(fd,
-                      (mofs_off_t)((mofs_uint64_t)(superblock.data_region_start + 1ULL) * (mofs_uint64_t)eff_blk_bytes),
-                      MOFS_SEEK_SET) < 0) {
+        ret = seek_device(
+            fd, (mofs_off_t)((mofs_uint64_t)(superblock.data_region_start + 1ULL) * (mofs_uint64_t)eff_blk_bytes));
+        if (ret != 0) {
             mofs_log_err("Seek error at root list node");
-            ret = get_errno();
             mofs_free(list_buf);
             goto out2;
         }
-        if (dev_write(fd, list_buf, (mofs_size_t)eff_blk_bytes) != (int)(mofs_size_t)eff_blk_bytes) {
+        ret = write_exact(fd, list_buf, (mofs_size_t)eff_blk_bytes);
+        if (ret != 0) {
             mofs_log_err("Write error at root list node");
-            ret = get_errno();
             mofs_free(list_buf);
             goto out2;
         }
@@ -262,22 +283,24 @@ int mofs_format(const char *device_file, int fs_size, int blk_size)
         root_inode.i_ctime = now;
     }
 
-    if (dev_lseek(fd,
-                  (mofs_off_t)((mofs_uint64_t)superblock.inode_table_start * (mofs_uint64_t)eff_blk_bytes) +
-                      (mofs_off_t)(2 * sizeof(mofs_inode_t)),
-                  MOFS_SEEK_SET) < 0) {
+    ret = seek_device(fd,
+                      (mofs_off_t)((mofs_uint64_t)superblock.inode_table_start * (mofs_uint64_t)eff_blk_bytes) +
+                          (mofs_off_t)(2 * sizeof(mofs_inode_t)));
+    if (ret != 0) {
         mofs_log_err("Seek error at root inode");
-        ret = get_errno();
         goto out2;
     }
 
-    if (dev_write(fd, &root_inode, sizeof(root_inode)) != (int)sizeof(root_inode)) {
+    ret = write_exact(fd, &root_inode, (mofs_size_t)sizeof(root_inode));
+    if (ret != 0) {
         mofs_log_err("Write error at root inode");
-        ret = get_errno();
         goto out2;
     }
 out2:
-    dev_close(fd);
+    close_ret = dev_close(fd);
+    if ((ret == 0) && (close_ret != 0)) {
+        ret = close_ret;
+    }
 out1:
     return ret;
 }

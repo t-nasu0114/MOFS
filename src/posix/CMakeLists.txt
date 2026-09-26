@@ -1,5 +1,8 @@
+# include mofs_sources.cmake
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/mofs_sources.cmake)
+
 set(POSIX_API_LAYER_SRC_LIST
-    posix.c
+    ${MOFS_POSIX_API_SOURCES}
 )
 
 add_library(${POSIX_API_LAYER_LIB_NAME} STATIC ${POSIX_API_LAYER_SRC_LIST})

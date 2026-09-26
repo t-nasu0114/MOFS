@@ -3,104 +3,166 @@
 #include <fcntl.h>
 #include <linux/fs.h>
 #include <mofs_devio.h>
-#include <stdlib.h>
-#include <string.h>
+#include <mofs_errno.h>
+#include <mofs_port_errno.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
-int dev_open(const char *path, int oflag)
+int dev_open(const char *path, int oflag, int *fd)
 {
-    int ret  = 0;
-    int flag = 0;
+    int os_fd = -1;
+    int flag  = 0;
+    int access_mode;
+    int known_flags = MOFS_IO_OPEN_FLAG_RDWR | MOFS_IO_OPEN_FLAG_SYNC | MOFS_IO_OPEN_FLAG_DIRECT;
 
-    /* Flag set nothing */
-    if ((oflag | MOFS_IO_OPEN_FLAG_NONE) == 0) {
-        ret = EINVAL;
+    if (fd == NULL) {
+        return MOFS_EINVAL;
+    }
+    *fd = -1;
+
+    if ((path == NULL) || ((oflag & ~known_flags) != 0)) {
+        return MOFS_EINVAL;
     }
 
-    /* Check access mode flag */
-    if (ret == 0) {
-        if ((oflag & MOFS_IO_OPEN_FLAG_RDWR) == MOFS_IO_OPEN_FLAG_RDWR) {
-            flag |= O_RDWR;
-        } else if ((oflag & MOFS_IO_OPEN_FLAG_RDONLY) == MOFS_IO_OPEN_FLAG_RDONLY) {
-            flag |= O_RDONLY;
-        } else if ((oflag & MOFS_IO_OPEN_FLAG_WRONLY) == MOFS_IO_OPEN_FLAG_WRONLY) {
-            flag |= O_WRONLY;
-        } else {
-            ret = EINVAL;
-        }
+    access_mode = oflag & MOFS_IO_OPEN_FLAG_RDWR;
+    if (access_mode == MOFS_IO_OPEN_FLAG_RDWR) {
+        flag |= O_RDWR;
+    } else if (access_mode == MOFS_IO_OPEN_FLAG_RDONLY) {
+        flag |= O_RDONLY;
+    } else if (access_mode == MOFS_IO_OPEN_FLAG_WRONLY) {
+        flag |= O_WRONLY;
+    } else {
+        return MOFS_EINVAL;
     }
 
-    if (ret == 0) {
-        /* Check combination flag */
-        if ((oflag & MOFS_IO_OPEN_FLAG_SYNC) == MOFS_IO_OPEN_FLAG_SYNC) {
-            flag |= O_SYNC;
-        }
-        if ((oflag & MOFS_IO_OPEN_FLAG_DIRECT) == MOFS_IO_OPEN_FLAG_DIRECT) {
-            flag |= O_DIRECT;
-        }
-
-        /* open */
-        ret = open(path, flag);
+    if ((oflag & MOFS_IO_OPEN_FLAG_SYNC) != 0) {
+        flag |= O_SYNC;
+    }
+    if ((oflag & MOFS_IO_OPEN_FLAG_DIRECT) != 0) {
+        flag |= O_DIRECT;
     }
 
-    return ret;
+    os_fd = open(path, flag);
+    if (os_fd < 0) {
+        return os_to_mofs_errno(errno);
+    }
+
+    *fd = os_fd;
+    return 0;
 }
 
-int dev_write(int fd, const void *buf, mofs_size_t count)
+int dev_write(int fd, const void *buf, mofs_size_t count, mofs_size_t *written)
 {
-    return (int)write(fd, buf, (size_t)count);
+    ssize_t result;
+
+    if (written == NULL) {
+        return MOFS_EINVAL;
+    }
+    *written = 0U;
+    if (buf == NULL) {
+        return MOFS_EINVAL;
+    }
+
+    result = write(fd, buf, (size_t)count);
+    if (result < 0) {
+        return os_to_mofs_errno(errno);
+    }
+
+    *written = (mofs_size_t)result;
+    return 0;
 }
 
-int dev_read(int fd, void *buf, mofs_size_t count)
+int dev_read(int fd, void *buf, mofs_size_t count, mofs_size_t *read_size)
 {
-    return (int)read(fd, buf, (size_t)count);
+    ssize_t result;
+
+    if (read_size == NULL) {
+        return MOFS_EINVAL;
+    }
+    *read_size = 0U;
+    if (buf == NULL) {
+        return MOFS_EINVAL;
+    }
+
+    result = read(fd, buf, (size_t)count);
+    if (result < 0) {
+        return os_to_mofs_errno(errno);
+    }
+
+    *read_size = (mofs_size_t)result;
+    return 0;
 }
 
 int dev_fsync(int fd)
 {
-    return fsync(fd);
+    if (fsync(fd) < 0) {
+        return os_to_mofs_errno(errno);
+    }
+    return 0;
 }
 
-void dev_close(int fd)
+int dev_close(int fd)
 {
-    close(fd);
+    if (close(fd) < 0) {
+        return os_to_mofs_errno(errno);
+    }
+    return 0;
 }
 
-mofs_off_t dev_lseek(int fd, mofs_off_t offset, int whence)
+int dev_lseek(int fd, mofs_off_t offset, int whence, mofs_off_t *new_offset)
 {
-    return (mofs_off_t)lseek(fd, (off_t)offset, whence);
+    off_t result;
+    int   os_whence;
+
+    if (new_offset == NULL) {
+        return MOFS_EINVAL;
+    }
+    *new_offset = 0;
+
+    if (whence == MOFS_SEEK_SET) {
+        os_whence = SEEK_SET;
+    } else if (whence == MOFS_SEEK_CUR) {
+        os_whence = SEEK_CUR;
+    } else if (whence == MOFS_SEEK_END) {
+        os_whence = SEEK_END;
+    } else {
+        return MOFS_EINVAL;
+    }
+
+    result = lseek(fd, (off_t)offset, os_whence);
+    if (result < 0) {
+        return os_to_mofs_errno(errno);
+    }
+
+    *new_offset = (mofs_off_t)result;
+    return 0;
 }
 
-unsigned long long dev_get_size(int fd, int *err)
+int dev_get_size(int fd, unsigned long long *size)
 {
-    struct stat        st;
-    unsigned long long bytes = 0;
-    int                sta   = 0;
+    struct stat st;
+
+    if (size == NULL) {
+        return MOFS_EINVAL;
+    }
+    *size = 0ULL;
 
     if (fstat(fd, &st) < 0) {
-        sta = errno;
+        return os_to_mofs_errno(errno);
     }
 
-    if (sta == 0) {
-        if (S_ISBLK(st.st_mode)) {
-            sta = ioctl(fd, BLKGETSIZE64, &bytes);
-            if (sta < 0) {
-                bytes = 0;
-                sta   = errno;
-            }
-        } else if (S_ISREG(st.st_mode)) {
-            bytes = (unsigned long long)st.st_size;
-        } else {
-            sta = EINVAL;
+    if (S_ISBLK(st.st_mode)) {
+        if (ioctl(fd, BLKGETSIZE64, size) < 0) {
+            *size = 0ULL;
+            return os_to_mofs_errno(errno);
         }
+    } else if (S_ISREG(st.st_mode)) {
+        *size = (unsigned long long)st.st_size;
+    } else {
+        return MOFS_EINVAL;
     }
 
-    if (sta != 0) {
-        *err = sta;
-    }
-
-    return bytes;
+    return 0;
 }

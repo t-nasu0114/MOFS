@@ -545,9 +545,7 @@ int mofs_bcache_flush(void)
 
     /* Make flushed blocks durable on the underlying device. */
     if (ret == 0) {
-        if (dev_fsync(ctx.dev_fd) != 0) {
-            ret = get_errno();
-        }
+        ret = dev_fsync(ctx.dev_fd);
     }
 
     bcache_unlock();

@@ -1,0 +1,7 @@
+tests:
+  mofs.fs.common:
+    tags:
+      - filesystem
+      - mofs
+    platform_allow:
+      - qemu_cortex_r5

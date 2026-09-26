@@ -25,13 +25,13 @@ static void test_TC_P2_009_set_and_get_caller_user(void **state)
     assert_true(user.valid);
 }
 
-/* TC-P2-010: setting supplementary groups with NULL pointer fails with EINVAL. */
-static void test_TC_P2_010_set_supp_groups_with_null_group_ptr(void **state)
+/* TC-P2-010: group query with NULL result pointer fails with EINVAL. */
+static void test_TC_P2_010_is_caller_in_group_with_null_result(void **state)
 {
     int ret = 0;
 
     (void)state;
-    ret = mofs_set_caller_supp_groups(NULL, 1U);
+    ret = mofs_is_caller_in_group((mofs_gid_t)1002, NULL);
     assert_int_equal(ret, MOFS_EINVAL);
 }
 
@@ -69,7 +69,7 @@ int main(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_TC_P2_009_set_and_get_caller_user),
-        cmocka_unit_test(test_TC_P2_010_set_supp_groups_with_null_group_ptr),
+        cmocka_unit_test(test_TC_P2_010_is_caller_in_group_with_null_result),
         cmocka_unit_test(test_TC_P2_011_is_caller_in_group_primary_group),
         cmocka_unit_test(test_TC_P2_012_is_caller_in_group_not_member),
     };

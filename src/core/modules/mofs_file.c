@@ -45,9 +45,7 @@ static int get_free_filehandle_index(void)
  * @param[in] start_blk_num File-relative data block index to read.
  * @param[out] fraction Valid bytes in the returned block when reading the
  *                      last partial block; otherwise 0.
- * @return 0 on success.
- * @return MOFS_EINVAL if arguments are invalid or the block index is out of
- *         file range.
+ * @return 0 on success. A start block at or past EOF yields zero bytes read.
  * @return Non-zero errno value from `get_errno()` on inode/disk read failures.
  */
 int read_file_data_block(int inode_num, void *buf, unsigned int start_blk_num, unsigned int req_blk_num,
@@ -72,13 +70,16 @@ int read_file_data_block(int inode_num, void *buf, unsigned int start_blk_num, u
     if (ret == 0) {
         ret = mofs_read_inode(inode_num, &inode_buf);
         if (ret == 0) {
-            if (start_blk_num >= inode_buf.i_nr_blocks) {
-                ret = MOFS_EINVAL;
-            } else if (((inode_buf.i_size + ctx.sp_blk.blk_size - 1) / ctx.sp_blk.blk_size) <= start_blk_num) {
-                ret = MOFS_EINVAL;
-            } else if (start_blk_num + req_blk_num >
-                       (inode_buf.i_size + ctx.sp_blk.blk_size - 1) / ctx.sp_blk.blk_size) {
-                req_blk_num = (inode_buf.i_size + ctx.sp_blk.blk_size - 1) / ctx.sp_blk.blk_size - start_blk_num;
+            unsigned int size_blks = (inode_buf.i_size + ctx.sp_blk.blk_size - 1) / ctx.sp_blk.blk_size;
+
+            /* A start at or past EOF is a short read, not an error. */
+            if ((start_blk_num >= inode_buf.i_nr_blocks) || (start_blk_num >= size_blks)) {
+                (*read_blk_num) = 0U;
+                (*fraction)     = 0U;
+                return 0;
+            }
+            if (start_blk_num + req_blk_num > size_blks) {
+                req_blk_num = size_blks - start_blk_num;
             }
         }
     }

@@ -4,6 +4,7 @@
 
 #include <cmocka.h>
 #include <mofs_core.h>
+#include <string.h>
 #include <mofs_file.h>
 #include <mofs_posix.h>
 #include <mofs_port_user.h>
@@ -181,6 +182,67 @@ static void test_TC_P0_018_closedir_invalid_handle(void **state)
     assert_true(mofs_errno != 0);
 }
 
+/* TC-P0-019: rename a file within the same directory. */
+static void test_TC_P0_019_rename_file_same_dir(void **state)
+{
+    mofs_stat_t st;
+
+    (void)state;
+    assert_int_equal(mofs_rename("/dir/item.txt", "/dir/renamed.txt"), 0);
+    assert_int_equal(mofs_stat("/dir/renamed.txt", &st), 0);
+    mofs_errno = 0;
+    assert_int_equal(mofs_stat("/dir/item.txt", &st), -1);
+    assert_int_equal(mofs_errno, MOFS_ENOENT);
+}
+
+/* TC-P0-020: moving a directory updates `..` to the new parent. */
+static void test_TC_P0_020_rename_dir_updates_dotdot(void **state)
+{
+    mofs_stat_t       parent;
+    mofs_dirhandle_t *handle = NULL;
+    mofs_dirent_t    *entry  = NULL;
+    int               guard  = 0;
+    int               found  = 0;
+
+    (void)state;
+    assert_int_equal(mofs_mkdir("/other", 0755U), 0);
+    assert_int_equal(mofs_mkdir("/dir/sub", 0755U), 0);
+    assert_int_equal(mofs_rename("/dir/sub", "/other/sub"), 0);
+    assert_int_equal(mofs_stat("/other", &parent), 0);
+
+    handle = mofs_opendir("/other/sub");
+    assert_non_null(handle);
+    do {
+        entry = mofs_readdir(handle);
+        if ((entry != NULL) && (strcmp(entry->name, "..") == 0)) {
+            assert_int_equal((int)entry->inode_num, (int)parent.st_ino);
+            found = 1;
+        }
+        guard++;
+    } while ((entry != NULL) && (guard < 8));
+    assert_int_equal(found, 1);
+    assert_int_equal(mofs_closedir(handle), 0);
+}
+
+/* TC-P0-021: renaming a file onto a directory fails with EISDIR. */
+static void test_TC_P0_021_rename_file_onto_dir(void **state)
+{
+    (void)state;
+    mofs_errno = 0;
+    assert_int_equal(mofs_rename("/dir/item.txt", "/empty"), -1);
+    assert_int_equal(mofs_errno, MOFS_EISDIR);
+}
+
+/* TC-P0-022: renaming onto a non-empty directory fails with ENOTEMPTY. */
+static void test_TC_P0_022_rename_onto_nonempty_dir(void **state)
+{
+    (void)state;
+    assert_int_equal(mofs_mkdir("/moveme", 0755U), 0);
+    mofs_errno = 0;
+    assert_int_equal(mofs_rename("/moveme", "/dir"), -1);
+    assert_int_equal(mofs_errno, MOFS_ENOTEMPTY);
+}
+
 int main(void)
 {
     const struct CMUnitTest tests[] = {
@@ -193,6 +255,14 @@ int main(void)
         cmocka_unit_test_setup_teardown(test_TC_P0_016_readdir_eof, setup_posix_dir_fixture, teardown_posix_dir_fixture),
         cmocka_unit_test_setup_teardown(test_TC_P0_017_closedir_success, setup_posix_dir_fixture, teardown_posix_dir_fixture),
         cmocka_unit_test(test_TC_P0_018_closedir_invalid_handle),
+        cmocka_unit_test_setup_teardown(test_TC_P0_019_rename_file_same_dir, setup_posix_dir_fixture,
+                                        teardown_posix_dir_fixture),
+        cmocka_unit_test_setup_teardown(test_TC_P0_020_rename_dir_updates_dotdot, setup_posix_dir_fixture,
+                                        teardown_posix_dir_fixture),
+        cmocka_unit_test_setup_teardown(test_TC_P0_021_rename_file_onto_dir, setup_posix_dir_fixture,
+                                        teardown_posix_dir_fixture),
+        cmocka_unit_test_setup_teardown(test_TC_P0_022_rename_onto_nonempty_dir, setup_posix_dir_fixture,
+                                        teardown_posix_dir_fixture),
     };
 
     return cmocka_run_group_tests(tests, NULL, NULL);

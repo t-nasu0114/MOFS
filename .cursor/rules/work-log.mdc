@@ -1,0 +1,25 @@
+---
+description: Auto work logging under scratch/work_logs; never commit logs to MOFS
+alwaysApply: true
+---
+
+# Work log
+
+- Write work notes only under `scratch/work_logs/`.
+- **Never** `git add` / commit `scratch/` or `scratch/work_logs/` into the MOFS repository.
+- Archive to the separate logs repo only via `scripts/work_logs_push.sh` (do not run it unless the user asks).
+- At meaningful milestones (task done, design decision), update today's daily file:
+
+```markdown
+# 作業記録 YYYY-MM-DD
+
+## HH:MM <短いタイトル>
+- 目的:
+- 決定:
+- 実施:
+- 検討要約:
+- 残課題:
+```
+
+- If a stop followup asks to update the work log, update the daily markdown first; keep the chat reply short.
+- Stop followups may include a `jj diff` summary (including manual edits). Use it when writing the daily entry.

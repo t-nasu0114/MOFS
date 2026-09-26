@@ -983,3 +983,333 @@ int mofs_readdir_core(mofs_dirhandle_t **handle)
 
     return ret;
 }
+
+/**
+ * @brief Require write permission on a parent directory inode.
+ *
+ * @param[in] parent_inode_num Parent directory inode number.
+ * @return 0 when the caller may modify the directory.
+ * @return MOFS_EPERM, MOFS_EACCES, MOFS_ENOTDIR, or an I/O error.
+ */
+static int require_parent_write(int parent_inode_num)
+{
+    int             ret = 0;
+    mofs_user_ctx_t user;
+    mofs_inode_t    parent_inode;
+
+    ret = mofs_get_caller_user(&user);
+    if (ret != 0) {
+        return ret;
+    }
+    if (user.valid == MOFS_FALSE) {
+        return MOFS_EPERM;
+    }
+    ret = mofs_read_inode(parent_inode_num, &parent_inode);
+    if (ret != 0) {
+        return ret;
+    }
+    if ((parent_inode.i_mode & MOFS_FTYPE_DIR) == 0U) {
+        return MOFS_ENOTDIR;
+    }
+    return mofs_check_dir_write(&user, &parent_inode);
+}
+
+/**
+ * @brief Read the `..` inode stored in the first directory block.
+ *
+ * @param[in] dir_inode Directory inode number.
+ * @param[out] parent_out Parent inode number from `..`.
+ * @return 0 on success.
+ * @return MOFS_EIO when `..` is missing or the block I/O is short.
+ */
+static int read_dotdot_parent(int dir_inode, int *parent_out)
+{
+    int            ret          = 0;
+    unsigned int   read_blk_num = 0U;
+    mofs_size_t    fraction     = 0U;
+    unsigned int   slot         = 0U;
+    unsigned int   slots        = 0U;
+    mofs_dirent_t *buf          = NULL;
+
+    buf = (mofs_dirent_t *)mofs_malloc(ctx.sp_blk.blk_size);
+    if (buf == NULL) {
+        return get_errno();
+    }
+
+    ret = read_file_data_block(dir_inode, buf, 0U, 1U, &read_blk_num, &fraction);
+    if ((ret == 0) && ((read_blk_num != 1U) || (fraction != 0U))) {
+        ret = MOFS_EIO;
+    }
+    if (ret == 0) {
+        slots = ctx.sp_blk.blk_size / (unsigned int)sizeof(mofs_dirent_t);
+        ret   = MOFS_EIO;
+        for (slot = 0U; slot < slots; slot++) {
+            if ((buf[slot].inode_num != 0U) && (mofs_strcmp(buf[slot].name, "..") == 0)) {
+                *parent_out = (int)buf[slot].inode_num;
+                ret         = 0;
+                break;
+            }
+        }
+    }
+
+    mofs_free(buf);
+    return ret;
+}
+
+/**
+ * @brief Point a directory's `..` entry at a new parent inode.
+ *
+ * @param[in] dir_inode Directory inode number.
+ * @param[in] new_parent New parent inode number.
+ * @return 0 on success.
+ * @return MOFS_EIO when `..` is missing or the block I/O is short.
+ */
+static int rewrite_dotdot(int dir_inode, int new_parent)
+{
+    int            ret             = 0;
+    unsigned int   read_blk_num    = 0U;
+    unsigned int   written_blk_num = 0U;
+    mofs_size_t    fraction        = 0U;
+    unsigned int   slot            = 0U;
+    unsigned int   slots           = 0U;
+    mofs_bool      found           = MOFS_FALSE;
+    mofs_dirent_t *buf             = NULL;
+
+    buf = (mofs_dirent_t *)mofs_malloc(ctx.sp_blk.blk_size);
+    if (buf == NULL) {
+        return get_errno();
+    }
+
+    ret = read_file_data_block(dir_inode, buf, 0U, 1U, &read_blk_num, &fraction);
+    if ((ret == 0) && ((read_blk_num != 1U) || (fraction != 0U))) {
+        ret = MOFS_EIO;
+    }
+    if (ret == 0) {
+        slots = ctx.sp_blk.blk_size / (unsigned int)sizeof(mofs_dirent_t);
+        for (slot = 0U; slot < slots; slot++) {
+            if ((buf[slot].inode_num != 0U) && (mofs_strcmp(buf[slot].name, "..") == 0)) {
+                buf[slot].inode_num = (mofs_uint32_t)new_parent;
+                found               = MOFS_TRUE;
+                break;
+            }
+        }
+        if (found == MOFS_FALSE) {
+            ret = MOFS_EIO;
+        }
+    }
+    if (ret == 0) {
+        ret = write_file_data_block(dir_inode, buf, 0U, 1U, &written_blk_num, &fraction);
+        if ((ret == 0) && ((written_blk_num != 1U) || (fraction != 0U))) {
+            ret = MOFS_EIO;
+        }
+    }
+
+    mofs_free(buf);
+    return ret;
+}
+
+/**
+ * @brief Report whether `ancestor` appears on the `..` chain of `start`.
+ *
+ * @param[in] ancestor Candidate ancestor inode.
+ * @param[in] start Directory inode to walk upward from.
+ * @param[out] found Set to true when `ancestor` is `start` or a parent of it.
+ * @return 0 on success.
+ * @return MOFS_EIO when a `..` entry cannot be read.
+ */
+static int directory_is_ancestor(int ancestor, int start, mofs_bool *found)
+{
+    int          ret    = 0;
+    int          cursor = start;
+    int          parent = -1;
+    unsigned int guard  = 0U;
+
+    *found = MOFS_FALSE;
+    while ((ret == 0) && (guard < ctx.sp_blk.inode_num)) {
+        if (cursor == ancestor) {
+            *found = MOFS_TRUE;
+            return 0;
+        }
+        if (cursor == MOFS_ROOT_INODE_NUM) {
+            return 0;
+        }
+        ret = read_dotdot_parent(cursor, &parent);
+        if (ret != 0) {
+            return ret;
+        }
+        if (parent == cursor) {
+            return 0;
+        }
+        cursor = parent;
+        guard++;
+    }
+    return ret;
+}
+
+/**
+ * @brief Add or subtract a directory's link count and stamp it.
+ *
+ * @param[in] inode_num Directory inode number.
+ * @param[in] delta +1 or -1.
+ * @return 0 on success.
+ * @return MOFS_EIO if a decrement would wrap the link count.
+ */
+static int adjust_dir_nlink(int inode_num, int delta)
+{
+    int          ret = 0;
+    mofs_inode_t inode;
+
+    ret = mofs_read_inode(inode_num, &inode);
+    if (ret != 0) {
+        return ret;
+    }
+    if ((delta < 0) && (inode.i_links == 0U)) {
+        return MOFS_EIO;
+    }
+    inode.i_links = (mofs_uint16_t)((int)inode.i_links + delta);
+    ret           = mofs_inode_stamp_now(&inode, MOFS_INODE_TIME_MTIME | MOFS_INODE_TIME_CTIME);
+    if (ret != 0) {
+        return ret;
+    }
+    return mofs_write_inode(inode_num, &inode);
+}
+
+/**
+ * @brief Rename a file or directory.
+ *
+ * Function behavior:
+ * - Resolves both paths and rejects root, `.`, and `..`.
+ * - Treats a rename onto the same inode as success.
+ * - Replaces an existing file, or an empty destination directory of the same type.
+ * - Rejects a directory move into its own descendant.
+ * - Moves the directory entry. A cross-directory directory move also rewrites `..` and parent link counts.
+ * - Restores the source entry if attaching the new name fails.
+ *
+ * @param[in] old_path Existing absolute path.
+ * @param[in] new_path Destination absolute path.
+ * @return 0 on success.
+ * @return MOFS_EINVAL for root, `.` / `..`, or a move into a descendant.
+ * @return MOFS_EISDIR or MOFS_ENOTDIR on a file/directory type mismatch.
+ * @return MOFS_ENOTEMPTY when the destination directory is not empty.
+ * @return Non-zero errno value from path resolution or directory updates.
+ */
+int mofs_rename_core(const char *old_path, const char *new_path)
+{
+    int              ret        = 0;
+    mofs_bool        src_is_dir = MOFS_FALSE;
+    mofs_bool        dst_is_dir = MOFS_FALSE;
+    mofs_bool        ancestor   = MOFS_FALSE;
+    mofs_path_info_t old_info;
+    mofs_path_info_t new_info;
+    mofs_inode_t     src_inode;
+    mofs_inode_t     dst_inode;
+
+    if ((old_path == NULL) || (new_path == NULL) || (old_path[0] != '/') || (new_path[0] != '/')) {
+        return MOFS_EINVAL;
+    }
+
+    mofs_memset(&old_info, 0, sizeof(old_info));
+    ret = mofs_resolve_path(old_path, MOFS_PATH_RESOLVE_PARENT | MOFS_PATH_RESOLVE_INODE | MOFS_PATH_CHECK_ACCESS,
+                            &old_info);
+    if (ret != 0) {
+        return ret;
+    }
+    if ((old_info.leaf_found == 0) || is_dot_or_dotdot_name(old_info.leaf_name)) {
+        return MOFS_EINVAL;
+    }
+
+    mofs_memset(&new_info, 0, sizeof(new_info));
+    ret = mofs_resolve_path(new_path,
+                            MOFS_PATH_RESOLVE_PARENT | MOFS_PATH_RESOLVE_INODE | MOFS_PATH_ALLOW_MISSING_LEAF |
+                                MOFS_PATH_CHECK_ACCESS,
+                            &new_info);
+    if (ret != 0) {
+        return ret;
+    }
+    if (is_dot_or_dotdot_name(new_info.leaf_name)) {
+        return MOFS_EINVAL;
+    }
+
+    ret = mofs_read_inode(old_info.leaf_inode_num, &src_inode);
+    if (ret != 0) {
+        return ret;
+    }
+    src_is_dir = ((src_inode.i_mode & MOFS_FTYPE_DIR) != 0U) ? MOFS_TRUE : MOFS_FALSE;
+
+    if (new_info.leaf_found != 0) {
+        if (new_info.leaf_inode_num == old_info.leaf_inode_num) {
+            return 0;
+        }
+        ret = mofs_read_inode(new_info.leaf_inode_num, &dst_inode);
+        if (ret != 0) {
+            return ret;
+        }
+        dst_is_dir = ((dst_inode.i_mode & MOFS_FTYPE_DIR) != 0U) ? MOFS_TRUE : MOFS_FALSE;
+        if ((src_is_dir == MOFS_TRUE) && (dst_is_dir == MOFS_TRUE)) {
+            ret = mofs_rmdir_core(new_path);
+        } else if ((src_is_dir == MOFS_FALSE) && (dst_is_dir == MOFS_FALSE)) {
+            ret = mofs_unlink_core(new_path);
+        } else if (src_is_dir == MOFS_TRUE) {
+            return MOFS_ENOTDIR;
+        } else {
+            return MOFS_EISDIR;
+        }
+        if (ret != 0) {
+            return ret;
+        }
+    }
+
+    if (src_is_dir == MOFS_TRUE) {
+        ret = directory_is_ancestor(old_info.leaf_inode_num, new_info.parent_inode_num, &ancestor);
+        if (ret != 0) {
+            return ret;
+        }
+        if (ancestor == MOFS_TRUE) {
+            return MOFS_EINVAL;
+        }
+    }
+
+    ret = require_parent_write(old_info.parent_inode_num);
+    if (ret != 0) {
+        return ret;
+    }
+    if (old_info.parent_inode_num != new_info.parent_inode_num) {
+        ret = require_parent_write(new_info.parent_inode_num);
+        if (ret != 0) {
+            return ret;
+        }
+    }
+
+    ret = remove_dir_entry(old_info.leaf_name, old_info.parent_inode_num);
+    if (ret != 0) {
+        return ret;
+    }
+
+    ret = add_dir_entry(new_info.leaf_name, new_info.parent_inode_num, old_info.leaf_inode_num);
+    if (ret != 0) {
+        (void)add_dir_entry(old_info.leaf_name, old_info.parent_inode_num, old_info.leaf_inode_num);
+        return ret;
+    }
+
+    if ((src_is_dir == MOFS_TRUE) && (old_info.parent_inode_num != new_info.parent_inode_num)) {
+        ret = rewrite_dotdot(old_info.leaf_inode_num, new_info.parent_inode_num);
+        if (ret == 0) {
+            ret = adjust_dir_nlink(old_info.parent_inode_num, -1);
+        }
+        if (ret == 0) {
+            ret = adjust_dir_nlink(new_info.parent_inode_num, 1);
+            if (ret != 0) {
+                (void)adjust_dir_nlink(old_info.parent_inode_num, 1);
+            }
+        }
+        if (ret != 0) {
+            (void)rewrite_dotdot(old_info.leaf_inode_num, old_info.parent_inode_num);
+            (void)remove_dir_entry(new_info.leaf_name, new_info.parent_inode_num);
+            (void)add_dir_entry(old_info.leaf_name, old_info.parent_inode_num, old_info.leaf_inode_num);
+            return ret;
+        }
+    }
+
+    (void)mofs_inode_stamp_persist(old_info.leaf_inode_num, MOFS_INODE_TIME_CTIME);
+    return 0;
+}
