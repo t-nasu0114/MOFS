@@ -19,7 +19,7 @@ Zephyr では VFS 経由で同じコアを載せられます。
 - POSIX 風 API: `open`, `close`, `read`, `write`, `pread`, `pwrite`, `truncate`, `ftruncate`,
   `unlink`, `stat`, `mkdir`, `rmdir`, `opendir`, `readdir`, `closedir`, `rename`, `fsync`, `lseek`
 - ツール: イメージをフォーマットする `mkfs.mofs` と、FUSE マウントツール（`mofs`）
-- Zephyr VFS アダプタと評価用ホスト（`src/os/zephyr/tools/vfs/`）
+- Zephyr VFS アダプタと評価用ホスト（`src/os/zephyr/tools/vfs/`、既定で FS shell 有効）
 - OS / core / POSIX 各レイヤをカバーする cmocka ベースのテスト（Linux）
 - Zephyr 共通 FS ztest ハーネス（`test/os/zephyr/`）
 
@@ -137,7 +137,7 @@ Zephyr 向けは west モジュールとしてビルドします。ホストの 
 - ボード例: `qemu_cortex_r5`
 - `$MOFS` はリポジトリの絶対パス
 
-評価用ホストは [`src/os/zephyr/tools/vfs/`](src/os/zephyr/tools/vfs/)（`mofs_vfs_main.c`）です。起動時に `mofs_format` → `fs_mount` → 簡単なファイル／ディレクトリ操作 → `fs_unmount` を行います。
+評価用ホストは [`src/os/zephyr/tools/vfs/`](src/os/zephyr/tools/vfs/)（`mofs_vfs_main.c`）です。起動時に `mofs_format` → `fs_mount` まで行い、マウントしたままシェルで待ちます。デフォルトで `CONFIG_SHELL` / `CONFIG_FILE_SYSTEM_SHELL` が有効です。組み込みのファイル／ディレクトリ演習と `fs_unmount` は `ENABLE_FILE_IO_TESTS` / `ENABLE_UNMOUNT`（どちらも既定 `0`）でオフです。
 
 ```sh
 export MOFS=/path/to/MOFS
@@ -146,6 +146,17 @@ west build -p always -b qemu_cortex_r5 $MOFS/src/os/zephyr/tools/vfs -- \
   -DEXTRA_ZEPHYR_MODULES=$MOFS
 west build -t run
 ```
+
+QEMU 起動後、UART コンソールのシェルから例えば次のように触れます（パスはマウントポイント付き）。
+
+```text
+fs ls /MOFS
+fs write /MOFS/hello.txt 68 65 6c 6c 6f
+fs read /MOFS/hello.txt
+fs mkdir /MOFS/dir
+```
+
+Zephyr 標準の `fs mount` は littlefs / FAT / rpmsgfs 専用で、MOFS タイプは選べません。マウントはホストの `main` 側が行います。
 
 共通 FS テスト用アプリは [`test/os/zephyr/`](test/os/zephyr/) です（ホスト cmocka の `test/CMakeLists.txt` には含めません）。
 
@@ -158,6 +169,7 @@ timeout 90 west build -t run   # ztest は成功後も QEMU が残るため
 注記:
 
 - `CONFIG_MOFS` / `CONFIG_MOFS_FS` / `CONFIG_FILE_SYSTEM` は各アプリの `prj.conf` 側で有効にします。
+- 評価用ホストの shell は [`src/os/zephyr/tools/vfs/prj.conf`](src/os/zephyr/tools/vfs/prj.conf) で既定 ON です。ztest アプリ側は shell を使いません。
 - フォーマットは mount 外の明示的 `mofs_format`（ホスト／テストフィクスチャ）です。
 - `FS_O_APPEND` は未サポート（`-ENOTSUP`）。`test_open_flags` の APPEND ケースは失敗し得ます。
 - ライブラリに入るのは `mofs_vfs.c` です。`mofs_vfs_main.c` は別アプリなので、ztest ビルドでは呼ばれません。
