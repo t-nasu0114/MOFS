@@ -18,6 +18,9 @@ typedef struct mofs_stat
     mofs_int64_t  st_atime_sec;
     mofs_int64_t  st_mtime_sec;
     mofs_int64_t  st_ctime_sec;
+    mofs_uint32_t st_atime_nsec;
+    mofs_uint32_t st_mtime_nsec;
+    mofs_uint32_t st_ctime_nsec;
     mofs_uint32_t st_blocks;
 } mofs_stat_t;
 

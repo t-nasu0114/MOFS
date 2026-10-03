@@ -7,6 +7,7 @@
 #include <mofs_errno.h>
 #include <mofs_inode.h>
 #include <mofs_posix.h>
+#include <mofs_port_time.h>
 #include <mofs_port_user.h>
 #include <unistd.h>
 
@@ -57,6 +58,64 @@ static void test_inode_size_is_64_bytes(void **state)
 {
     (void)state;
     assert_int_equal((int)sizeof(mofs_inode_t), 64);
+}
+
+static void test_inode_timestamp_layout(void **state)
+{
+    (void)state;
+    assert_int_equal((int)offsetof(mofs_inode_t, i_atime), 24);
+    assert_int_equal((int)offsetof(mofs_inode_t, i_mtime), 32);
+    assert_int_equal((int)offsetof(mofs_inode_t, i_ctime), 40);
+    assert_int_equal((int)offsetof(mofs_inode_t, i_atime_nsec), 48);
+    assert_int_equal((int)offsetof(mofs_inode_t, i_mtime_nsec), 52);
+    assert_int_equal((int)offsetof(mofs_inode_t, i_ctime_nsec), 56);
+}
+
+static int timestamp_is_later(mofs_int64_t a_sec, mofs_uint32_t a_nsec, mofs_int64_t b_sec, mofs_uint32_t b_nsec)
+{
+    return (a_sec > b_sec) || ((a_sec == b_sec) && (a_nsec > b_nsec));
+}
+
+static void test_stat_nsec_in_range(void **state)
+{
+    mofs_stat_t        st;
+    mofs_filehandle_t *handle = NULL;
+
+    (void)state;
+    handle = mofs_open("/nsec.txt", MOFS_OFLAG_CREAT | MOFS_OFLAG_RDWR, 0644U);
+    assert_non_null(handle);
+    assert_int_equal(mofs_close(handle), 0);
+
+    assert_int_equal(mofs_stat("/nsec.txt", &st), 0);
+    assert_true(st.st_atime_nsec < MOFS_NSEC_PER_SEC);
+    assert_true(st.st_mtime_nsec < MOFS_NSEC_PER_SEC);
+    assert_true(st.st_ctime_nsec < MOFS_NSEC_PER_SEC);
+}
+
+static void test_write_updates_mtime_with_subsecond_resolution(void **state)
+{
+    mofs_stat_t        st_before;
+    mofs_stat_t        st_after;
+    mofs_filehandle_t *handle = NULL;
+    const char         data[] = "data";
+
+    (void)state;
+    handle = mofs_open("/subsec.txt", MOFS_OFLAG_CREAT | MOFS_OFLAG_RDWR, 0644U);
+    assert_non_null(handle);
+    assert_int_equal(mofs_close(handle), 0);
+
+    assert_int_equal(mofs_stat("/subsec.txt", &st_before), 0);
+    (void)usleep(2000U);
+    handle = mofs_open("/subsec.txt", MOFS_OFLAG_RDWR, 0644U);
+    assert_non_null(handle);
+    assert_int_equal(mofs_write(handle, (void *)data, sizeof(data)), (ssize_t)sizeof(data));
+    assert_int_equal(mofs_close(handle), 0);
+
+    assert_int_equal(mofs_stat("/subsec.txt", &st_after), 0);
+    assert_true(timestamp_is_later(st_after.st_mtime_sec, st_after.st_mtime_nsec, st_before.st_mtime_sec,
+                                   st_before.st_mtime_nsec));
+    assert_true(timestamp_is_later(st_after.st_ctime_sec, st_after.st_ctime_nsec, st_before.st_ctime_sec,
+                                   st_before.st_ctime_nsec));
 }
 
 static void test_root_stat_has_timestamps(void **state)
@@ -177,6 +236,11 @@ int main(void)
 {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_inode_size_is_64_bytes),
+        cmocka_unit_test(test_inode_timestamp_layout),
+        cmocka_unit_test_setup_teardown(test_stat_nsec_in_range, setup_timestamp_fixture,
+                                        teardown_timestamp_fixture),
+        cmocka_unit_test_setup_teardown(test_write_updates_mtime_with_subsecond_resolution,
+                                        setup_timestamp_fixture, teardown_timestamp_fixture),
         cmocka_unit_test_setup_teardown(test_root_stat_has_timestamps, setup_timestamp_fixture,
                                         teardown_timestamp_fixture),
         cmocka_unit_test_setup_teardown(test_create_sets_file_timestamps, setup_timestamp_fixture,

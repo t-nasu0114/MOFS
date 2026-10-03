@@ -28,7 +28,7 @@
  */
 int mofs_inode_stamp_now(mofs_inode_t *inode, unsigned int mask)
 {
-    mofs_time_sec_t now = MOFS_TIME_INVALID;
+    mofs_timespec_t now = {MOFS_TIME_INVALID, 0U};
     int             ret = 0;
 
     if ((inode == NULL) || (mask == 0U)) {
@@ -41,13 +41,16 @@ int mofs_inode_stamp_now(mofs_inode_t *inode, unsigned int mask)
     }
 
     if ((mask & MOFS_INODE_TIME_ATIME) != 0U) {
-        inode->i_atime = now;
+        inode->i_atime      = now.tv_sec;
+        inode->i_atime_nsec = now.tv_nsec;
     }
     if ((mask & MOFS_INODE_TIME_MTIME) != 0U) {
-        inode->i_mtime = now;
+        inode->i_mtime      = now.tv_sec;
+        inode->i_mtime_nsec = now.tv_nsec;
     }
     if ((mask & MOFS_INODE_TIME_CTIME) != 0U) {
-        inode->i_ctime = now;
+        inode->i_ctime      = now.tv_sec;
+        inode->i_ctime_nsec = now.tv_nsec;
     }
 
     return 0;

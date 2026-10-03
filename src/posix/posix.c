@@ -435,7 +435,7 @@ mofs_off_t mofs_lseek(mofs_filehandle_t *handle, mofs_off_t offset, int whence)
         } else {
             new_pos = base + offset;
         }
-    } else if ((offset == (mofs_off_t)INT64_MIN) || (base < -offset)) {
+    } else if ((offset == (mofs_off_t)MOFS_INT64_MIN) || (base < -offset)) {
         err = MOFS_EINVAL;
     } else {
         new_pos = base + offset;

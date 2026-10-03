@@ -32,6 +32,8 @@ typedef mofs_uint32_t mofs_bool;
 
 #define MOFS_UINT32_MAX UINT32_MAX
 #define MOFS_UINT64_MAX UINT64_MAX
+#define MOFS_INT64_MIN  INT64_MIN
+#define MOFS_INT64_MAX  INT64_MAX
 
 typedef char mofs_os_type_check_uint8[(sizeof(mofs_uint8_t) == 1U) ? 1 : -1];
 typedef char mofs_os_type_check_uint16[(sizeof(mofs_uint16_t) == 2U) ? 1 : -1];

@@ -271,16 +271,19 @@ int mofs_format(const char *device_file, int fs_size, int blk_size)
     root_inode.i_data_head = superblock.data_region_start + 1U;
     root_inode.i_nr_blocks = 1U;
     {
-        mofs_time_sec_t now = MOFS_TIME_INVALID;
+        mofs_timespec_t now = {MOFS_TIME_INVALID, 0U};
 
         ret = mofs_now(&now);
         if (ret != 0) {
             mofs_log_err("Failed to set root inode timestamps");
             goto out2;
         }
-        root_inode.i_atime = now;
-        root_inode.i_mtime = now;
-        root_inode.i_ctime = now;
+        root_inode.i_atime      = now.tv_sec;
+        root_inode.i_atime_nsec = now.tv_nsec;
+        root_inode.i_mtime      = now.tv_sec;
+        root_inode.i_mtime_nsec = now.tv_nsec;
+        root_inode.i_ctime      = now.tv_sec;
+        root_inode.i_ctime_nsec = now.tv_nsec;
     }
 
     ret = seek_device(fd,

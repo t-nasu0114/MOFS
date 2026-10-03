@@ -221,9 +221,12 @@ int mofs_getattr_fuse(const char *path, struct stat *stbuf, struct fuse_file_inf
         stbuf->st_mode  = stat.st_mode;
         stbuf->st_uid   = stat.st_uid;
         stbuf->st_gid   = stat.st_gid;
-        stbuf->st_atime = stat.st_atime_sec;
-        stbuf->st_mtime = stat.st_mtime_sec;
-        stbuf->st_ctime = stat.st_ctime_sec;
+        stbuf->st_atim.tv_sec  = (time_t)stat.st_atime_sec;
+        stbuf->st_atim.tv_nsec = (long)stat.st_atime_nsec;
+        stbuf->st_mtim.tv_sec  = (time_t)stat.st_mtime_sec;
+        stbuf->st_mtim.tv_nsec = (long)stat.st_mtime_nsec;
+        stbuf->st_ctim.tv_sec  = (time_t)stat.st_ctime_sec;
+        stbuf->st_ctim.tv_nsec = (long)stat.st_ctime_nsec;
         return 0;
     }
     return fuse_neg_errno_from_mofs();

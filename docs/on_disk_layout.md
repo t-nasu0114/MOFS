@@ -10,10 +10,13 @@
 | `i_uid` / `i_gid` | Owner |
 | `i_data_head` | Absolute block number of the first **list node** (0 = no mapping) |
 | `i_nr_blocks` | Number of **file data** blocks (list nodes not included) |
-| `i_atime` | Last access time (Unix epoch seconds) |
-| `i_mtime` | Last modification time (Unix epoch seconds) |
-| `i_ctime` | Last status change time (Unix epoch seconds) |
-| `reserved[4]` | Padding |
+| `i_atime` | Last access time (signed 64-bit Unix epoch seconds) |
+| `i_mtime` | Last modification time (signed 64-bit Unix epoch seconds) |
+| `i_ctime` | Last status change time (signed 64-bit Unix epoch seconds) |
+| `i_atime_nsec` | Nanoseconds part of `i_atime` (0..999999999) |
+| `i_mtime_nsec` | Nanoseconds part of `i_mtime` (0..999999999) |
+| `i_ctime_nsec` | Nanoseconds part of `i_ctime` (0..999999999) |
+| `reserved[1]` | Padding |
 
 ## Data block list node (one logical block)
 

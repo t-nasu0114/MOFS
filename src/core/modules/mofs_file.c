@@ -1222,15 +1222,18 @@ int mofs_stat_core(const char *path, mofs_stat_t *stbuf)
     }
 
     if (ret == 0) {
-        stbuf->st_ino       = inode_num;
-        stbuf->st_nlink     = inode.i_links;
-        stbuf->st_size      = inode.i_size;
-        stbuf->st_mode      = inode.i_mode;
-        stbuf->st_uid       = inode.i_uid;
-        stbuf->st_gid       = inode.i_gid;
-        stbuf->st_atime_sec = (mofs_int64_t)inode.i_atime;
-        stbuf->st_mtime_sec = (mofs_int64_t)inode.i_mtime;
-        stbuf->st_ctime_sec = (mofs_int64_t)inode.i_ctime;
+        stbuf->st_ino        = inode_num;
+        stbuf->st_nlink      = inode.i_links;
+        stbuf->st_size       = inode.i_size;
+        stbuf->st_mode       = inode.i_mode;
+        stbuf->st_uid        = inode.i_uid;
+        stbuf->st_gid        = inode.i_gid;
+        stbuf->st_atime_sec  = inode.i_atime;
+        stbuf->st_mtime_sec  = inode.i_mtime;
+        stbuf->st_ctime_sec  = inode.i_ctime;
+        stbuf->st_atime_nsec = inode.i_atime_nsec;
+        stbuf->st_mtime_nsec = inode.i_mtime_nsec;
+        stbuf->st_ctime_nsec = inode.i_ctime_nsec;
     }
 
     return ret;

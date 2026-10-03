@@ -110,17 +110,20 @@ typedef struct mofs_data_list_hdr
 /* Inode (64 bytes on disk) */
 typedef struct mofs_inode
 {
-    mofs_uint32_t i_size;      /* File size in bytes */
-    mofs_uint16_t i_links;     /* Link count */
-    mofs_uint16_t i_mode;      /* Permission and file type */
-    mofs_uint32_t i_uid;       /* User ID */
-    mofs_uint32_t i_gid;       /* Group ID */
-    mofs_uint32_t i_data_head; /* Absolute block of first list node, 0 if no data mapping */
-    mofs_uint32_t i_nr_blocks; /* Number of file data blocks (not list nodes) */
-    mofs_uint64_t i_atime;     /* Last access time (Unix epoch seconds) */
-    mofs_uint64_t i_mtime;     /* Last modification time (Unix epoch seconds) */
-    mofs_uint64_t i_ctime;     /* Last status change time (Unix epoch seconds) */
-    mofs_uint32_t reserved[4]; /* Padding to 64 bytes */
+    mofs_uint32_t i_size;       /* File size in bytes */
+    mofs_uint16_t i_links;      /* Link count */
+    mofs_uint16_t i_mode;       /* Permission and file type */
+    mofs_uint32_t i_uid;        /* User ID */
+    mofs_uint32_t i_gid;        /* Group ID */
+    mofs_uint32_t i_data_head;  /* Absolute block of first list node, 0 if no data mapping */
+    mofs_uint32_t i_nr_blocks;  /* Number of file data blocks (not list nodes) */
+    mofs_int64_t  i_atime;      /* Last access time (signed Unix epoch seconds) */
+    mofs_int64_t  i_mtime;      /* Last modification time (signed Unix epoch seconds) */
+    mofs_int64_t  i_ctime;      /* Last status change time (signed Unix epoch seconds) */
+    mofs_uint32_t i_atime_nsec; /* Nanoseconds part of i_atime */
+    mofs_uint32_t i_mtime_nsec; /* Nanoseconds part of i_mtime */
+    mofs_uint32_t i_ctime_nsec; /* Nanoseconds part of i_ctime */
+    mofs_uint32_t reserved[1];  /* Padding to 64 bytes */
 } mofs_inode_t;
 
 typedef char mofs_inode_size_must_be_64[(sizeof(mofs_inode_t) == 64U) ? 1 : -1];
