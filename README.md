@@ -171,7 +171,7 @@ timeout 90 west build -t run   # ztest は成功後も QEMU が残るため
 - `CONFIG_MOFS` / `CONFIG_MOFS_FS` / `CONFIG_FILE_SYSTEM` は各アプリの `prj.conf` 側で有効にします。
 - 評価用ホストの shell は [`src/os/zephyr/tools/vfs/prj.conf`](src/os/zephyr/tools/vfs/prj.conf) で既定 ON です。ztest アプリ側は shell を使いません。
 - フォーマットは mount 外の明示的 `mofs_format`（ホスト／テストフィクスチャ）です。
-- `FS_O_APPEND` は未サポート（`-ENOTSUP`）。`test_open_flags` の APPEND ケースは失敗し得ます。
+- `FS_O_APPEND` は `MOFS_OFLAG_APPEND` に写し、`fs_write` はファイル末尾へ書く。Zephyr の VFS フラグに `FS_O_TRUNC` / `FS_O_SYNC` は無い。
 - ライブラリに入るのは `mofs_vfs.c` です。`mofs_vfs_main.c` は別アプリなので、ztest ビルドでは呼ばれません。
 
 ## Usage

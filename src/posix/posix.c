@@ -19,6 +19,27 @@ static void posix_set_errno(int err)
 }
 
 /**
+ * @brief Flush the volume cache when the handle was opened with `MOFS_OFLAG_SYNC`.
+ *
+ * Function behavior:
+ * - Returns 0 when the sync flag is clear.
+ * - Otherwise calls `mofs_bcache_flush()`, the same volume flush as `mofs_fsync`.
+ * - When the buffer cache is disabled, that flush is a no-op because the device
+ *   was opened with `O_SYNC`.
+ *
+ * @param[in] handle Opened file handle.
+ * @return 0 when no flush is required or the flush succeeds.
+ * @return Non-zero `MOFS_E*` from `mofs_bcache_flush()` on failure.
+ */
+static int posix_sync_if_oflag(const mofs_filehandle_t *handle)
+{
+    if ((handle->open_flags & MOFS_OFLAG_SYNC) == 0) {
+        return 0;
+    }
+    return mofs_bcache_flush();
+}
+
+/**
  * @brief Retrieve file status for a path in POSIX layer.
  *
  * Function behavior:
@@ -137,6 +158,8 @@ mofs_dirent_t *mofs_readdir(mofs_dirhandle_t *handle)
  *
  * Function behavior:
  * - Calls `mofs_open_core()` with specified path and open flags.
+ * - After a successful `MOFS_OFLAG_TRUNC` open that also has `MOFS_OFLAG_SYNC`,
+ *   flushes the volume cache before returning. A flush failure closes the handle.
  * - Updates `mofs_errno` with a `MOFS_E*` value on failure.
  * - Returns an opened file handle on success.
  *
@@ -153,6 +176,13 @@ mofs_filehandle_t *mofs_open(const char *path, int flags, mofs_mode_t mode)
 
     mofs_core_sync_lock();
     err = mofs_open_core(path, flags, mode, &handle);
+    if ((err == 0) && ((flags & MOFS_OFLAG_TRUNC) != 0) && ((flags & MOFS_OFLAG_SYNC) != 0)) {
+        err = mofs_bcache_flush();
+        if (err != 0) {
+            (void)mofs_close_core(&handle);
+            handle = NULL;
+        }
+    }
     mofs_core_sync_unlock();
     if (err != 0) {
         posix_set_errno(err);
@@ -216,8 +246,10 @@ int mofs_read(mofs_filehandle_t *handle, void *buf, mofs_size_t size)
  *
  * Function behavior:
  * - Validates handle argument before write dispatch.
- * - Uses current `handle->file_offset` as write start offset.
- * - Calls `mofs_write_core()` and requests offset update on success.
+ * - With `MOFS_OFLAG_APPEND`, samples `i_size` under the core lock and writes there.
+ * - Otherwise uses current `handle->file_offset` as the write start offset.
+ * - Calls `mofs_pwrite()` while still holding the lock so the sampled end and the
+ *   write stay atomic with respect to other MOFS operations.
  * - Updates `mofs_errno` with a `MOFS_E*` value on failure.
  *
  * @param[in] handle Opened file handle.
@@ -228,11 +260,30 @@ int mofs_read(mofs_filehandle_t *handle, void *buf, mofs_size_t size)
  */
 int mofs_write(mofs_filehandle_t *handle, const void *buf, mofs_size_t size)
 {
+    mofs_off_t   offset = 0;
+    mofs_inode_t inode;
+    int          err = 0;
+    int          ret = 0;
+
     if (handle == NULL) {
         posix_set_errno(MOFS_EINVAL);
         return -1;
     }
-    return mofs_pwrite(handle, buf, size, (mofs_off_t)(handle->file_offset));
+
+    mofs_core_sync_lock();
+    offset = (mofs_off_t)handle->file_offset;
+    if ((handle->used != MOFS_FALSE) && ((handle->open_flags & MOFS_OFLAG_APPEND) != 0)) {
+        err = mofs_read_inode(handle->inode_num, &inode);
+        if (err != 0) {
+            mofs_core_sync_unlock();
+            posix_set_errno(err);
+            return -1;
+        }
+        offset = (mofs_off_t)inode.i_size;
+    }
+    ret = mofs_pwrite(handle, buf, size, offset);
+    mofs_core_sync_unlock();
+    return ret;
 }
 
 /**
@@ -282,6 +333,8 @@ int mofs_pread(mofs_filehandle_t *handle, void *buf, mofs_size_t size, mofs_off_
  * Function behavior:
  * - Validates handle and offset arguments before write dispatch.
  * - Calls `mofs_write_core()` and requests offset update on success.
+ * - Ignores `MOFS_OFLAG_APPEND`; the caller-supplied offset is the write position.
+ * - After a successful write on an `MOFS_OFLAG_SYNC` handle, flushes the volume cache.
  * - Updates `mofs_errno` with a `MOFS_E*` value on failure.
  *
  * @param[in] handle Opened file handle.
@@ -306,6 +359,9 @@ int mofs_pwrite(mofs_filehandle_t *handle, const void *buf, mofs_size_t size, mo
 
     mofs_core_sync_lock();
     err = mofs_write_core(&handle, buf, size, &write_offset, &written_size, MOFS_TRUE);
+    if (err == 0) {
+        err = posix_sync_if_oflag(handle);
+    }
     mofs_core_sync_unlock();
     if (err != 0) {
         posix_set_errno(err);
@@ -434,6 +490,7 @@ int mofs_truncate(const char *path, mofs_off_t length)
  * Function behavior:
  * - Validates handle and confirms the handle is opened for writing.
  * - Calls `mofs_truncate_core()` with the handle inode number.
+ * - After success on an `MOFS_OFLAG_SYNC` handle, flushes the volume cache.
  * - Updates `mofs_errno` with a `MOFS_E*` value on failure.
  *
  * @param[in] handle Opened file handle.
@@ -457,6 +514,9 @@ int mofs_ftruncate(mofs_filehandle_t *handle, mofs_off_t length)
 
     mofs_core_sync_lock();
     err = mofs_truncate_core(handle->inode_num, length);
+    if (err == 0) {
+        err = posix_sync_if_oflag(handle);
+    }
     mofs_core_sync_unlock();
     if (err != 0) {
         posix_set_errno(err);

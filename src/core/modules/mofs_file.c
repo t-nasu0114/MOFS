@@ -410,6 +410,8 @@ int mofs_unlink_core(const char *path)
  * - Validates input pointers and obtains caller user context.
  * - Resolves inode from path and validates file type constraints.
  * - Checks access permissions based on open flags and inode mode bits.
+ * - `MOFS_OFLAG_TRUNC` with a write mode truncates a regular file to length 0
+ *   before the handle is allocated. Read-only truncate is `MOFS_EINVAL`.
  * - Allocates one entry from file handle pool and initializes it.
  *
  * @param[in] path NULL-terminated absolute path string.
@@ -423,6 +425,8 @@ int mofs_unlink_core(const char *path)
  * @return MOFS_EEXIST if `MOFS_OFLAG_CREAT | MOFS_OFLAG_EXCL` is specified
  *         for an already existing file.
  * @return MOFS_ENOTDIR if directory open is requested for a non-directory.
+ * @return MOFS_EINVAL if `MOFS_OFLAG_TRUNC` is set without a write access mode.
+ * @return MOFS_EISDIR if `MOFS_OFLAG_TRUNC` is set for a directory.
  * @return MOFS_ENFILE if file handle pool is exhausted.
  * @return Other non-zero errno values propagated from lower layers.
  */
@@ -485,6 +489,18 @@ int mofs_open_core(const char *path, int flags, mofs_mode_t mode, mofs_filehandl
     ret = mofs_check_open_permission(flags, &user, &inode);
     if (ret != 0) {
         goto out;
+    }
+
+    /* O_RDONLY|O_TRUNC is rejected. Writable truncate goes through truncate_core. */
+    if ((flags & MOFS_OFLAG_TRUNC) != 0) {
+        if ((flags & MOFS_OFLAG_WRONLY) == 0) {
+            ret = MOFS_EINVAL;
+            goto out;
+        }
+        ret = mofs_truncate_core(inode_num, 0);
+        if (ret != 0) {
+            goto out;
+        }
     }
 
     /* allocate file handle */

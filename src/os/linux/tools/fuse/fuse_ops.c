@@ -94,7 +94,6 @@ static int build_mofs_open_args(int fuse_flags, mode_t requested_mode, bool forc
         flags |= MOFS_OFLAG_EXCL;
     }
 #endif
-#if 0 /* Not supported */
 #ifdef O_TRUNC
     if ((fuse_flags & O_TRUNC) != 0) {
         flags |= MOFS_OFLAG_TRUNC;
@@ -110,7 +109,6 @@ static int build_mofs_open_args(int fuse_flags, mode_t requested_mode, bool forc
         flags |= MOFS_OFLAG_SYNC;
     }
 #endif
-#endif /* Not supported */
     out_mode = requested_mode;
 #ifdef O_CREAT
     if (force_create || ((fuse_flags & O_CREAT) != 0)) {
@@ -602,8 +600,9 @@ int mofs_read_fuse(const char *path, char *buf, size_t size, off_t offset, struc
  * @brief Write file data for a path.
  *
  * Function behavior:
- * - Uses opened handle from `fi->fh` and dispatches to POSIX wrapper `mofs_write()`.
- * - Synchronizes file offset with requested FUSE write offset.
+ * - Uses opened handle from `fi->fh`.
+ * - `O_APPEND` dispatches to `mofs_write()`, which appends at EOF and ignores `offset`.
+ * - Otherwise dispatches to `mofs_pwrite()` at the requested FUSE write offset.
  *
  * @param[in] path Target file path.
  * @param[in] buf Source buffer containing write data.
@@ -629,7 +628,11 @@ int mofs_write_fuse(const char *path, const char *buf, size_t size, off_t offset
         return 0;
     }
 
-    ret = mofs_pwrite((mofs_filehandle_t *)(uintptr_t)(fi->fh), buf, size, offset);
+    if ((fi->flags & O_APPEND) != 0) {
+        ret = mofs_write((mofs_filehandle_t *)(uintptr_t)(fi->fh), buf, (mofs_size_t)size);
+    } else {
+        ret = mofs_pwrite((mofs_filehandle_t *)(uintptr_t)(fi->fh), buf, size, offset);
+    }
     if (ret < 0) {
         return fuse_neg_errno_from_mofs();
     }

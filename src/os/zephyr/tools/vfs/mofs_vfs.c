@@ -93,10 +93,10 @@ static int mofs_vfs_neg_errno(void)
  *
  * Function behavior:
  * - Strips the Zephyr mount-point prefix from `fs_path`.
- * - Maps `FS_O_READ` / `FS_O_WRITE` / `FS_O_CREATE` onto `MOFS_OFLAG_*`.
+ * - Maps `FS_O_READ` / `FS_O_WRITE` / `FS_O_CREATE` / `FS_O_APPEND` onto `MOFS_OFLAG_*`.
  * - A missing access mode opens read-only so a missing path is `ENOENT`.
  *   Later read and write still return `EACCES`, because Zephyr flag 0 is not `O_RDONLY`.
- * - Rejects `FS_O_APPEND`. `MOFS_OFLAG_APPEND` is not implemented.
+ * - Zephyr has no `FS_O_TRUNC` or `FS_O_SYNC`, so those MOFS flags are not set here.
  * - Stores the MOFS handle in `filp->filep`.
  *
  * @param[in,out] filp Zephyr file object.
@@ -114,9 +114,6 @@ static int mofs_vfs_open(struct fs_file_t *filp, const char *fs_path, fs_mode_t 
     if ((filp == NULL) || (filp->mp == NULL) || (fs_path == NULL)) {
         return -EINVAL;
     }
-    if ((flags & FS_O_APPEND) != 0) {
-        return -ENOTSUP;
-    }
     if ((flags & FS_O_RDWR) == FS_O_RDWR) {
         mofs_flags = MOFS_OFLAG_RDWR;
     } else if ((flags & FS_O_READ) != 0) {
@@ -129,6 +126,9 @@ static int mofs_vfs_open(struct fs_file_t *filp, const char *fs_path, fs_mode_t 
     }
     if ((flags & FS_O_CREATE) != 0) {
         mofs_flags |= MOFS_OFLAG_CREAT;
+    }
+    if ((flags & FS_O_APPEND) != 0) {
+        mofs_flags |= MOFS_OFLAG_APPEND;
     }
 
     path   = mofs_vfs_strip_prefix(fs_path, filp->mp);

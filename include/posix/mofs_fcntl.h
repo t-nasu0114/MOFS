@@ -13,9 +13,9 @@
 #define MOFS_OFLAG_CREAT     0x0010
 #define MOFS_OFLAG_DIRECTORY 0x0020
 #define MOFS_OFLAG_EXCL      0x0040
-#define MOFS_OFLAG_TRUNC     0x0080 /* Support is TBD */
-#define MOFS_OFLAG_APPEND    0x0100 /* Support is TBD */
-#define MOFS_OFLAG_SYNC      0x0200 /* Support is TBD */
+#define MOFS_OFLAG_TRUNC     0x0080 /* Writable open truncates a regular file to 0. Read-only is EINVAL. */
+#define MOFS_OFLAG_APPEND    0x0100 /* mofs_write appends at EOF. mofs_pwrite keeps the given offset. */
+#define MOFS_OFLAG_SYNC      0x0200 /* write, pwrite, open(O_TRUNC), and ftruncate flush the volume cache. */
 
 typedef struct mofs_filehandle mofs_filehandle_t;
 

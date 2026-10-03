@@ -8,6 +8,7 @@
 #include <mofs_file.h>
 #include <mofs_posix.h>
 #include <mofs_port_user.h>
+#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -304,6 +305,44 @@ static void test_TC_P0_015_read_after_lseek(void **state)
     assert_int_equal(mofs_close(handle), 0);
 }
 
+/* Return 1 when `needle` occurs anywhere in the raw image, 0 otherwise. */
+static int raw_image_contains(const char *image_path, const char *needle)
+{
+    FILE          *fp;
+    unsigned char  buf[4096];
+    size_t         needle_len;
+    size_t         filled = 0U;
+    size_t         nread;
+
+    needle_len = strlen(needle);
+    if ((image_path == NULL) || (needle_len == 0U) || (needle_len >= sizeof(buf))) {
+        return 0;
+    }
+    fp = fopen(image_path, "rb");
+    if (fp == NULL) {
+        return 0;
+    }
+    while ((nread = fread(buf + filled, 1U, sizeof(buf) - filled, fp)) > 0U) {
+        size_t total = filled + nread;
+        size_t i;
+
+        for (i = 0U; (i + needle_len) <= total; i++) {
+            if (memcmp(buf + i, needle, needle_len) == 0) {
+                (void)fclose(fp);
+                return 1;
+            }
+        }
+        if (total >= needle_len) {
+            memmove(buf, buf + total - (needle_len - 1U), needle_len - 1U);
+            filled = needle_len - 1U;
+        } else {
+            filled = total;
+        }
+    }
+    (void)fclose(fp);
+    return 0;
+}
+
 /* TC-P0-016: fsync on an open handle succeeds. */
 static void test_TC_P0_016_fsync_open_handle(void **state)
 {
@@ -317,6 +356,175 @@ static void test_TC_P0_016_fsync_open_handle(void **state)
     mofs_errno = 0;
     assert_int_equal(mofs_fsync(NULL), -1);
     assert_int_equal(mofs_errno, MOFS_EINVAL);
+}
+
+/* TC-P0-017: O_TRUNC on a writable open sets the file size and offset to 0. */
+static void test_TC_P0_017_open_trunc_clears_file(void **state)
+{
+    mofs_filehandle_t *handle = NULL;
+    mofs_stat_t        st;
+    char               buf[8] = {0};
+
+    (void)state;
+    handle = mofs_open("/existing.txt", MOFS_OFLAG_RDWR, 0U);
+    assert_non_null(handle);
+    assert_int_equal(mofs_write(handle, "hello", 5U), 5);
+    assert_int_equal(mofs_close(handle), 0);
+
+    mofs_errno = 0;
+    handle     = mofs_open("/existing.txt", MOFS_OFLAG_RDWR | MOFS_OFLAG_TRUNC, 0U);
+    assert_non_null(handle);
+    assert_int_equal(mofs_errno, 0);
+    assert_int_equal(mofs_lseek(handle, 0, MOFS_SEEK_CUR), 0);
+    assert_int_equal(mofs_read(handle, buf, sizeof(buf)), 0);
+    assert_int_equal(mofs_close(handle), 0);
+
+    assert_int_equal(mofs_stat("/existing.txt", &st), 0);
+    assert_int_equal(st.st_size, 0);
+}
+
+/* TC-P0-018: O_RDONLY|O_TRUNC fails with EINVAL and leaves the file unchanged. */
+static void test_TC_P0_018_open_rdonly_trunc_einval(void **state)
+{
+    mofs_filehandle_t *handle = NULL;
+    mofs_stat_t        st;
+    char               buf[8] = {0};
+
+    (void)state;
+    handle = mofs_open("/existing.txt", MOFS_OFLAG_RDWR, 0U);
+    assert_non_null(handle);
+    assert_int_equal(mofs_write(handle, "hello", 5U), 5);
+    assert_int_equal(mofs_close(handle), 0);
+
+    mofs_errno = 0;
+    handle     = mofs_open("/existing.txt", MOFS_OFLAG_RDONLY | MOFS_OFLAG_TRUNC, 0U);
+    assert_null(handle);
+    assert_int_equal(mofs_errno, MOFS_EINVAL);
+
+    assert_int_equal(mofs_stat("/existing.txt", &st), 0);
+    assert_int_equal(st.st_size, 5);
+    handle = mofs_open("/existing.txt", MOFS_OFLAG_RDONLY, 0U);
+    assert_non_null(handle);
+    assert_int_equal(mofs_read(handle, buf, sizeof(buf)), 5);
+    assert_memory_equal(buf, "hello", 5U);
+    assert_int_equal(mofs_close(handle), 0);
+}
+
+/* TC-P0-019: O_TRUNC on a directory fails with EISDIR. */
+static void test_TC_P0_019_open_trunc_directory_eisdir(void **state)
+{
+    mofs_filehandle_t *handle = NULL;
+
+    (void)state;
+    assert_int_equal(mofs_mkdir("/truncdir", 0755U), 0);
+
+    mofs_errno = 0;
+    handle     = mofs_open("/truncdir", MOFS_OFLAG_RDWR | MOFS_OFLAG_TRUNC, 0U);
+    assert_null(handle);
+    assert_int_equal(mofs_errno, MOFS_EISDIR);
+}
+
+/* TC-P0-020: O_APPEND writes at EOF even after lseek, including a second handle. */
+static void test_TC_P0_020_append_writes_at_eof(void **state)
+{
+    mofs_filehandle_t *handle  = NULL;
+    mofs_filehandle_t *second  = NULL;
+    mofs_filehandle_t *reader  = NULL;
+    char               buf[8]  = {0};
+
+    (void)state;
+    handle = mofs_open("/existing.txt", MOFS_OFLAG_RDWR, 0U);
+    assert_non_null(handle);
+    assert_int_equal(mofs_write(handle, "AAAA", 4U), 4);
+    assert_int_equal(mofs_close(handle), 0);
+
+    handle = mofs_open("/existing.txt", MOFS_OFLAG_RDWR | MOFS_OFLAG_APPEND, 0U);
+    assert_non_null(handle);
+    assert_int_equal(mofs_lseek(handle, 0, MOFS_SEEK_SET), 0);
+    assert_int_equal(mofs_write(handle, "BB", 2U), 2);
+    assert_int_equal(mofs_lseek(handle, 0, MOFS_SEEK_CUR), 6);
+
+    second = mofs_open("/existing.txt", MOFS_OFLAG_WRONLY | MOFS_OFLAG_APPEND, 0U);
+    assert_non_null(second);
+    assert_int_equal(mofs_write(second, "C", 1U), 1);
+    assert_int_equal(mofs_close(second), 0);
+    assert_int_equal(mofs_close(handle), 0);
+
+    reader = mofs_open("/existing.txt", MOFS_OFLAG_RDONLY, 0U);
+    assert_non_null(reader);
+    assert_int_equal(mofs_read(reader, buf, sizeof(buf)), 7);
+    assert_memory_equal(buf, "AAAABBC", 7U);
+    assert_int_equal(mofs_close(reader), 0);
+}
+
+/* TC-P0-021: mofs_pwrite ignores O_APPEND and writes at the given offset. */
+static void test_TC_P0_021_pwrite_ignores_append(void **state)
+{
+    mofs_filehandle_t *handle = NULL;
+    mofs_filehandle_t *reader = NULL;
+    char               buf[8] = {0};
+
+    (void)state;
+    handle = mofs_open("/existing.txt", MOFS_OFLAG_RDWR, 0U);
+    assert_non_null(handle);
+    assert_int_equal(mofs_write(handle, "AAAA", 4U), 4);
+    assert_int_equal(mofs_close(handle), 0);
+
+    handle = mofs_open("/existing.txt", MOFS_OFLAG_RDWR | MOFS_OFLAG_APPEND, 0U);
+    assert_non_null(handle);
+    assert_int_equal(mofs_pwrite(handle, "ZZ", 2U, 1), 2);
+    assert_int_equal(mofs_close(handle), 0);
+
+    reader = mofs_open("/existing.txt", MOFS_OFLAG_RDONLY, 0U);
+    assert_non_null(reader);
+    assert_int_equal(mofs_read(reader, buf, sizeof(buf)), 4);
+    assert_memory_equal(buf, "AZZA", 4U);
+    assert_int_equal(mofs_close(reader), 0);
+}
+
+/*
+ * TC-P0-022: O_SYNC write reaches the image before unmount.
+ * Cache disabled: mofs_bcache_flush is a no-op because the device is opened with O_SYNC,
+ * so a missing marker before flush cannot be observed. The case is compiled only when
+ * the write-back cache is enabled.
+ */
+#if MOFS_BUFFER_CACHE_ENABLE
+static void test_TC_P0_022_osync_write_reaches_image(void **state)
+{
+    mofs_filehandle_t *handle      = NULL;
+    const char        *image_path  = (const char *)*state;
+    const char        *cached_mark = "NOSYNC-MARKER-UNFLUSHED";
+    const char        *synced_mark = "OSYNC-MARKER-FLUSHED!!";
+
+    handle = mofs_open("/existing.txt", MOFS_OFLAG_RDWR, 0U);
+    assert_non_null(handle);
+    assert_int_equal(mofs_write(handle, cached_mark, strlen(cached_mark)), (int)strlen(cached_mark));
+    assert_int_equal(raw_image_contains(image_path, cached_mark), 0);
+    assert_int_equal(mofs_close(handle), 0);
+
+    handle = mofs_open("/existing.txt", MOFS_OFLAG_RDWR | MOFS_OFLAG_SYNC, 0U);
+    assert_non_null(handle);
+    assert_int_equal(mofs_write(handle, synced_mark, strlen(synced_mark)), (int)strlen(synced_mark));
+    assert_int_equal(raw_image_contains(image_path, synced_mark), 1);
+    assert_int_equal(mofs_close(handle), 0);
+}
+#endif
+
+/* TC-P0-023: ftruncate on an O_SYNC handle succeeds and updates the size. */
+static void test_TC_P0_023_fsync_ftruncate_updates_size(void **state)
+{
+    mofs_filehandle_t *handle = NULL;
+    mofs_stat_t        st;
+
+    (void)state;
+    handle = mofs_open("/existing.txt", MOFS_OFLAG_RDWR | MOFS_OFLAG_SYNC, 0U);
+    assert_non_null(handle);
+    assert_int_equal(mofs_write(handle, "hello", 5U), 5);
+    assert_int_equal(mofs_ftruncate(handle, 2), 0);
+    assert_int_equal(mofs_close(handle), 0);
+
+    assert_int_equal(mofs_stat("/existing.txt", &st), 0);
+    assert_int_equal(st.st_size, 2);
 }
 
 int main(void)
@@ -347,6 +555,22 @@ int main(void)
         cmocka_unit_test_setup_teardown(test_TC_P0_015_read_after_lseek, setup_posix_file_fixture,
                                         teardown_posix_file_fixture),
         cmocka_unit_test_setup_teardown(test_TC_P0_016_fsync_open_handle, setup_posix_file_fixture,
+                                        teardown_posix_file_fixture),
+        cmocka_unit_test_setup_teardown(test_TC_P0_017_open_trunc_clears_file, setup_posix_file_fixture,
+                                        teardown_posix_file_fixture),
+        cmocka_unit_test_setup_teardown(test_TC_P0_018_open_rdonly_trunc_einval, setup_posix_file_fixture,
+                                        teardown_posix_file_fixture),
+        cmocka_unit_test_setup_teardown(test_TC_P0_019_open_trunc_directory_eisdir, setup_posix_file_fixture,
+                                        teardown_posix_file_fixture),
+        cmocka_unit_test_setup_teardown(test_TC_P0_020_append_writes_at_eof, setup_posix_file_fixture,
+                                        teardown_posix_file_fixture),
+        cmocka_unit_test_setup_teardown(test_TC_P0_021_pwrite_ignores_append, setup_posix_file_fixture,
+                                        teardown_posix_file_fixture),
+#if MOFS_BUFFER_CACHE_ENABLE
+        cmocka_unit_test_setup_teardown(test_TC_P0_022_osync_write_reaches_image, setup_posix_file_fixture,
+                                        teardown_posix_file_fixture),
+#endif
+        cmocka_unit_test_setup_teardown(test_TC_P0_023_fsync_ftruncate_updates_size, setup_posix_file_fixture,
                                         teardown_posix_file_fixture),
     };
 
